@@ -1,6 +1,6 @@
 {
   "name": "map-of-content",
-  "version": "1.0.0",
+  "version": "1.8.0",
   "description": "Map of Content plugin",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,10 @@
     "build": "rollup --config rollup.config.js --environment BUILD:production",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "prepare": "husky install",
-    "prettier": "prettier --write --plugin-search-dir=. ."
+    "prettier": "prettier --write --plugin-search-dir=. .",
+    "lint": "eslint \"src/**/*.{ts,svelte}\" \"rollup.config.js\" \"scripts/**/*.mjs\"",
+    "test": "rm -rf tests/dist && tsc -p tests/tsconfig.json && node tests/dist/tests/logic.test.js",
+    "validate": "npm run check && npm run lint && npm test && npm run build && node scripts/validate-plugin.mjs"
   },
   "keywords": [],
   "author": "",
@@ -31,6 +34,14 @@
     "svelte-check": "^2.0.0",
     "svelte-preprocess": "^4.7.4",
     "tslib": "^2.2.0",
-    "typescript": "^4.3.5"
-  }
+    "typescript": "^4.3.5",
+    "eslint": "8.57.1",
+    "@typescript-eslint/eslint-plugin": "5.62.0",
+    "@typescript-eslint/parser": "5.62.0",
+    "eslint-config-prettier": "8.10.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@10"
 }
