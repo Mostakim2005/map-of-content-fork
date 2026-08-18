@@ -1,116 +1,467 @@
-import { Notice, Plugin } from "obsidian";
+import { Menu, Modal, Notice, Plugin, Setting, TFile } from "obsidian";
 import { MOC_VIEW_TYPE } from "./constants";
 import { DBManager } from "./db";
 import MOCView from "./view";
 import { MOCSettingTab, SettingsManager } from "./settings";
 import { devLog } from "./utils";
+import CentralNoteModal from "./central-note-modal";
+import DiagnosticsModal from "./diagnostics-modal";
+import WhyNoteModal from "./why-note-modal";
+import ProfileModal from "./profile-modal";
 
 export default class MOCPlugin extends Plugin {
   db: DBManager;
   view: MOCView;
   settings: SettingsManager;
+  private autoUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async onload() {
+  async onload(): Promise<void> {
     this.settings = new SettingsManager(this);
     await this.settings.loadSettings();
     this.db = new DBManager(this);
+    this.register(() => this.clearAutoUpdateTimer());
+
     this.registerView(
       MOC_VIEW_TYPE,
-      (leaf) => (this.view = new MOCView(leaf, this))
+      (leaf) => new MOCView(leaf, this)
     );
+
+    this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        if (this.settings.isCurrentNoteCentral() && file) {
+          this.scheduleAutoUpdate();
+        }
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        void (async () => {
+          this.db.invalidateLinkCache();
+          await this.settings.handleFileRename(oldPath, file.path);
+          this.scheduleAutoUpdate();
+        })();
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        void (async () => {
+          this.db.invalidateLinkCache();
+          await this.settings.handleFileDelete(file.path);
+          this.scheduleAutoUpdate();
+        })();
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("create", () => {
+        this.db.invalidateLinkCache();
+        if (this.settings.get("auto_update_on_file_change")) this.scheduleAutoUpdate();
+      })
+    );
+
+    this.registerEvent(
+      this.app.metadataCache.on("changed", (file) => {
+        if (file.extension === "md") this.db.invalidateLinkCache(file.path);
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (file.extension === "md" && this.settings.get("auto_update_on_file_change")) {
+          this.db.invalidateLinkCache(file.path);
+          this.scheduleAutoUpdate();
+        }
+      })
+    );
+
     this.app.workspace.onLayoutReady(() => this.initializePlugin());
   }
 
-  async initializePlugin() {
+  private scheduleAutoUpdate(delay = 250): void {
+    if (!this.settings.get("auto_update_on_file_change") && !this.settings.isCurrentNoteCentral()) return;
+    if (this.autoUpdateTimer !== null) clearTimeout(this.autoUpdateTimer);
+    this.autoUpdateTimer = setTimeout(() => {
+      this.autoUpdateTimer = null;
+      void this.db.update(true);
+    }, delay);
+  }
+
+  private clearAutoUpdateTimer(): void {
+    if (this.autoUpdateTimer !== null) clearTimeout(this.autoUpdateTimer);
+    this.autoUpdateTimer = null;
+  }
+
+  async initializePlugin(): Promise<void> {
     this.addSettingTab(new MOCSettingTab(this));
     this.initLeaf();
-    this.db.update(true);
+    void this.db.update(true);
 
-    this.addRibbonIcon("sync", "Update Map of Content", async () => {
-      await this.db.update();
+    this.addRibbonIcon("git-branch", "Show Map of Content", () => {
+      this.initLeaf();
+    });
+
+    this.addRibbonIcon("refresh-cw", "Update Map of Content", () => {
+      void this.db.update();
     });
 
     this.addCommand({
       id: "rebuild-map-of-content",
       name: "Update Map of Content",
-      callback: () => {
-        this.db.update();
-      },
+      callback: () => void this.db.update(),
     });
 
     this.addCommand({
       id: "show-map-of-content-pane",
       name: "Show Map of Content pane",
-      callback: () => {
-        this.initLeaf();
-      },
+      callback: () => this.initLeaf(),
     });
 
     this.addCommand({
+      id: "choose-central-node",
+      name: "Choose Central Node",
+      callback: () => this.chooseCentralNote(),
+    });
+
+    this.addCommand({
+      id: "use-current-note-as-central-node",
+      name: "Use current note as Central Node",
+      callback: () => void this.useCurrentNoteAsCentralNote(),
+    });
+
+    this.addCommand({
+      id: "set-current-note-as-fixed-central-node",
+      name: "Set current note as fixed Central Node",
+      callback: () => void this.setActiveFileAsFixedCentralNote(),
+    });
+
+    // Preserve the pre-1.4.1 command ID so existing hotkeys continue to work.
+    this.addCommand({
       id: "open-note-as-central-note",
-      name: "Set current note as Central Note",
-      callback: () => {
-        const errors = [];
-        // make sure a file is opened
-        if (this.app.workspace.getActiveFile() === null) {
-          errors.push("No file has been opened");
-        } else if (
-          this.settings.isExcludedFile(this.app.workspace.getActiveFile())
+      name: "Set current note as Central Node",
+      callback: () => void this.setActiveFileAsFixedCentralNote(),
+    });
+
+    this.addCommand({
+      id: "use-fixed-central-node",
+      name: "Use fixed Central Node",
+      callback: () => void this.useFixedCentralNote(),
+    });
+
+    this.addCommand({
+      id: "use-automatic-central-node",
+      name: "Use automatic Central Node",
+      callback: () => void this.useAutomaticCentralNote(),
+    });
+
+    this.addCommand({
+      id: "save-moc-profile",
+      name: "Save current Map of Content profile",
+      callback: () => new ProfileModal(this, "save").open(),
+    });
+
+    this.addCommand({
+      id: "choose-moc-profile",
+      name: "Choose Map of Content profile",
+      callback: () => new ProfileModal(this, "choose").open(),
+    });
+
+    this.addCommand({
+      id: "toggle-tag-filter",
+      name: "Toggle Map of Content tag filter",
+      callback: () => void this.toggleSetting("enable_tag_filter"),
+    });
+
+    this.addCommand({
+      id: "toggle-smart-sorting",
+      name: "Toggle Map of Content smart sorting",
+      callback: () => void this.toggleSetting("enable_smart_sort"),
+    });
+
+    this.addCommand({
+      id: "generate-moc-note",
+      name: "Generate a Map of Content note",
+      callback: () => void this.generateMOCNote(),
+    });
+
+    this.addCommand({
+      id: "show-moc-diagnostics",
+      name: "Show Map of Content diagnostics",
+      callback: () => this.showDiagnostics(),
+    });
+
+    this.addCommand({
+      id: "why-is-current-note-in-moc",
+      name: "Why is the current note in the Map of Content?",
+      callback: () => this.showWhyCurrentNote(),
+    });
+
+    this.addCommand({
+      id: "add-current-note-to-central-node-favorites",
+      name: "Add current note to Central Node favorites",
+      callback: () => void this.addActiveFileToCentralNodePresets(),
+    });
+
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu: Menu, file) => {
+        if (
+          !(file instanceof TFile) ||
+          file.extension !== "md" ||
+          this.settings.isExcludedFile(file)
         ) {
-          errors.push("This file has been excluded from the Map of Content.");
-        }
-        if (errors.length) {
-          new Notice(errors[0]);
           return;
         }
-        this.settings.set({ CN_path: this.app.workspace.getActiveFile().path });
-        this.db.update();
-      },
+
+        menu.addItem((item) => {
+          item
+            .setTitle("Set as fixed Central Node")
+            .setIcon("target")
+            .onClick(() => void this.setFixedCentralNote(file.path));
+        });
+        menu.addItem((item) => {
+          item
+            .setTitle("Add to Central Node favorites")
+            .setIcon("star")
+            .onClick(() => void this.addCentralNodePreset(file.path));
+        });
+      })
+    );
+  }
+
+
+  openCentralNodeMenu(event: MouseEvent): void {
+    const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle("Choose Central Node...")
+        .setIcon("search")
+        .onClick(() => this.chooseCentralNote())
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Use current note")
+        .setIcon("file-text")
+        .onClick(() => void this.useCurrentNoteAsCentralNote())
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Use automatic Central Node")
+        .setIcon("shuffle")
+        .onClick(() => void this.useAutomaticCentralNote())
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle("Use fixed Central Node")
+        .setIcon("target")
+        .onClick(() => void this.useFixedCentralNote())
+    );
+    const favorites = this.settings.get("central_note_presets").filter((path) =>
+      this.settings.isValidCentralNotePath(path)
+    );
+    if (favorites.length) {
+      menu.addSeparator();
+      for (const path of favorites.slice(0, 25)) {
+        menu.addItem((item) =>
+          item
+            .setTitle(path)
+            .setIcon(path === this.settings.getCentralNotePath() ? "check" : "star")
+            .onClick(() => void this.setFixedCentralNote(path, false))
+        );
+      }
+    }
+    if (this.settings.get("moc_profiles").length) {
+      menu.addSeparator();
+      menu.addItem((item) => item.setTitle("Choose MOC profile...").setIcon("layers").onClick(() => new ProfileModal(this, "choose").open()));
+    }
+    menu.addItem((item) => item.setTitle("Save current MOC profile").setIcon("save").onClick(() => new ProfileModal(this, "save").open()));
+    menu.addItem((item) => item.setTitle("Generate MOC note").setIcon("file-plus").onClick(() => void this.generateMOCNote()));
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle("Central Node settings")
+        .setIcon("settings")
+        .onClick(() => this.app.commands.executeCommandById("app:open-settings"))
+    );
+    menu.showAtMouseEvent(event);
+  }
+
+  showDiagnostics(): void {
+    new DiagnosticsModal(this).open();
+  }
+
+  showWhyCurrentNote(): void {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || file.extension !== "md" || this.settings.isExcludedFile(file)) {
+      new Notice("Open a non-excluded Markdown note first.");
+      return;
+    }
+    new WhyNoteModal(this, file.path).open();
+  }
+
+  async useAutomaticCentralNote(): Promise<void> {
+    await this.settings.set({ central_note_mode: "automatic" });
+    new Notice("Automatic Central Node mode enabled.");
+  }
+
+  async toggleSetting(key: "enable_tag_filter" | "enable_smart_sort"): Promise<void> {
+    if (key === "enable_tag_filter") {
+      const next = !this.settings.get("enable_tag_filter");
+      await this.settings.set({ enable_tag_filter: next });
+      new Notice(`Tag filtering ${next ? "enabled" : "disabled"}.`);
+      return;
+    }
+    const next = !this.settings.get("enable_smart_sort");
+    await this.settings.set({ enable_smart_sort: next });
+    new Notice(`Smart sorting ${next ? "enabled" : "disabled"}.`);
+  }
+
+  async generateMOCNote(): Promise<void> {
+    const central = this.settings.getCentralNotePath();
+    if (!central || !this.db.getNoteFromPath(central)) {
+      new Notice("Choose a valid Central Node first.");
+      return;
+    }
+    const modal = new Modal(this.app);
+    const content = modal.contentEl;
+    content.empty();
+    content.createEl("h2", { text: "Generate Map of Content note" });
+    let path = `${central.replace(/\.md$/i, "")} MOC.md`;
+    new Setting(content).setName("Note path").addText((text) => {
+      text.setValue(path);
+      text.onChange((value) => (path = value));
     });
+    new Setting(content).addButton((button) => button.setButtonText("Generate").setCta().onClick(async () => {
+      const normalized = path.trim().endsWith(".md") ? path.trim() : `${path.trim()}.md`;
+      const lines = ["---", "moc_generated: true", `moc_source: ${central}`, "---", `# ${central.replace(/\.md$/i, "")}`, "", "<!-- Generated by Map of Content. Content outside this block is preserved on future updates. -->", "<!-- MOC:START -->"];
+      const stack: Array<{ note: string; depth: number }> = this.db.getSortedDescendants(central).map((note) => ({ note, depth: 0 })).reverse();
+      const rendered = new Set<string>();
+      while (stack.length) {
+        const current = stack.pop();
+        if (!current || rendered.has(current.note)) continue;
+        rendered.add(current.note);
+        lines.push(`${"  ".repeat(current.depth)}- [[${current.note.replace(/\.md$/i, "")}]]`);
+        const children = this.db.getSortedDescendants(current.note);
+        for (let i = children.length - 1; i >= 0; i--) stack.push({ note: children[i], depth: current.depth + 1 });
+      }
+      lines.push("<!-- MOC:END -->");
+      const text = `${lines.join("\n")}\n`;
+      const parent = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
+      if (parent) await this.app.vault.createFolder(parent).catch(() => undefined);
+      const existing = this.app.vault.getAbstractFileByPath(normalized);
+      if (existing instanceof TFile) {
+        const original = await this.app.vault.read(existing);
+        const start = original.indexOf("<!-- MOC:START -->");
+        const end = original.indexOf("<!-- MOC:END -->");
+        if (start >= 0 && end > start) {
+          const replacement = text.slice(text.indexOf("<!-- MOC:START -->"));
+          const before = original.slice(0, start);
+          const after = original.slice(end + "<!-- MOC:END -->".length);
+          await this.app.vault.modify(existing, `${before}${replacement}${after}`);
+        } else {
+          await this.app.vault.append(existing, `\n\n${text}`);
+        }
+      } else {
+        await this.app.vault.create(normalized, text);
+      }
+      modal.close();
+      new Notice(`Generated ${normalized}`);
+    }));
+    modal.open();
+  }
+
+  chooseCentralNote(): void {
+    new CentralNoteModal(this).open();
+  }
+
+  async setFixedCentralNote(path: string, addToPresets = true): Promise<void> {
+    if (!(await this.settings.setFixedCentralNote(path, addToPresets))) {
+      new Notice("That note cannot be used as a Central Node.");
+      return;
+    }
+    new Notice(`Central Node set to ${path}`);
+  }
+
+  async useCurrentNoteAsCentralNote(): Promise<void> {
+    if (!(await this.settings.useCurrentNoteAsCentralNote())) {
+      new Notice("Open a non-excluded Markdown note first.");
+      return;
+    }
+    new Notice("Current note is now the Central Node.");
+  }
+
+  async useFixedCentralNote(): Promise<void> {
+    if (!(await this.settings.useFixedCentralNote())) {
+      new Notice("Your fixed Central Node is not a valid Markdown note.");
+      this.chooseCentralNote();
+      return;
+    }
+    new Notice("Using the fixed Central Node.");
+  }
+
+  async setActiveFileAsFixedCentralNote(): Promise<void> {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile) {
+      new Notice("No file is open.");
+      return;
+    }
+    await this.setFixedCentralNote(activeFile.path);
+  }
+
+  async addActiveFileToCentralNodePresets(): Promise<void> {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (
+      !activeFile ||
+      activeFile.extension !== "md" ||
+      this.settings.isExcludedFile(activeFile)
+    ) {
+      new Notice("Open a non-excluded Markdown note first.");
+      return;
+    }
+    await this.addCentralNodePreset(activeFile.path);
+  }
+
+  async addCentralNodePreset(path: string): Promise<void> {
+    if (!(await this.settings.addCentralNotePreset(path))) {
+      new Notice("That note cannot be added as a Central Node favorite.");
+      return;
+    }
+    new Notice("Central Node favorite saved.");
   }
 
   initLeaf(): void {
     if (this.app.workspace.getLeavesOfType(MOC_VIEW_TYPE).length) {
       devLog("View already attached");
-    } else {
-      this.app.workspace.getRightLeaf(true).setViewState({
-        type: MOC_VIEW_TYPE,
-        active: true,
-      });
+      return;
     }
+
+    this.app.workspace.getRightLeaf(true).setViewState({
+      type: MOC_VIEW_TYPE,
+      active: true,
+    });
   }
 
-  rerender() {
+  rerender(): void {
     devLog("rerender on plugin called");
-    if (this.view) {
-      this.view.rerender();
-    }
+    this.view?.rerender();
   }
 
   onunload(): void {
     devLog("Unloading plugin");
-
-    if (this.view) {
-      this.view.onClose();
-    }
     this.app.workspace.detachLeavesOfType(MOC_VIEW_TYPE);
+    this.view = undefined;
   }
 
-  CNexists(): boolean {
-    let exists = !(
-      this.app.vault.getAbstractFileByPath(this.settings.get("CN_path")) ===
-      null
-    );
-    devLog(exists ? "CN exists" : "CN does not exist");
-    return exists;
-  }
 
-  registerViewInstance(view: MOCView) {
+
+  registerViewInstance(view: MOCView): void {
     devLog("View registered");
     this.view = view;
   }
 
-  unregisterViewInstance(view: MOCView) {
-    this.view = undefined;
+  unregisterViewInstance(view: MOCView): void {
+    if (this.view === view) {
+      this.view = undefined;
+    }
   }
 }

@@ -1,85 +1,129 @@
 import {
   LINKED_BOTH,
-  LINKED_CN as LINKED_CN,
+  LINKED_CN,
   LINKED_FROM,
   LINKED_TO,
 } from "./constants";
+import { TFile, Notice } from "obsidian";
+import type { App, Vault } from "obsidian";
+import type { LinkDirection } from "./types";
 import type {
-  App,
-  EmbedCache,
-  FrontmatterLinkCache,
-  LinkCache,
-  Vault,
-} from "obsidian";
-import { Notice } from "obsidian";
-import type { DB, FileItem, Path } from "./types";
+  DB,
+  FileItem,
+  LinkCacheEntry,
+  LinkTraversalMode,
+  MOCDiagnostics,
+  Path,
+  PathSearchResult,
+} from "./types";
 import { getFileNameFromPath, devLog } from "./utils";
 import type MOCPlugin from "./main";
 import type { SettingsManager } from "./settings";
 
+const nextFrame = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
+
 export class DBManager {
   db: DB = {};
   settings: SettingsManager;
-  dbEntries: any[];
-  dbKeys: string[];
+  dbEntries: [string, FileItem][] = [];
+  dbKeys: string[] = [];
   app: App;
   plugin: MOCPlugin;
   vault: Vault;
-  allPaths: Path[] = [];
-  descendants: Map<string, Set<string>>;
-  fileHasDuplicatedName: Map<string, boolean>;
-  isDatabaseComplete: boolean = false;
-  isDatabaseUpdating: boolean = true;
-  timesGetPathRan: number;
+  descendants: Map<string, Set<string>> = new Map();
+  shortestPathParents: Map<string, Set<string>> = new Map();
+  centralNotePath: string | undefined;
+  fileHasDuplicatedName: Map<string, boolean> = new Map();
+  diagnostics: MOCDiagnostics = {
+    totalIncludedFiles: 0,
+    reachableFiles: 0,
+    unreachableFiles: 0,
+    orphanFiles: 0,
+    brokenLinks: 0,
+  };
+  isDatabaseComplete = false;
+  isDatabaseUpdating = false;
+  lastPathSearchTruncated = false;
+
+  private updatePromise: Promise<void> | null = null;
+  private updateQueued = false;
+  private queuedSilent = true;
+  private linkCache = new Map<string, LinkCacheEntry>();
+  private brokenLinksByNote = new Map<string, number>();
+
+  invalidateLinkCache(path?: string): void {
+    if (path) this.linkCache.delete(path);
+    else this.linkCache.clear();
+  }
 
   constructor(plugin: MOCPlugin) {
     this.app = plugin.app;
     this.plugin = plugin;
     this.settings = plugin.settings;
+    this.vault = this.app.vault;
     this.dbEntries = Object.entries(this.db);
   }
 
-  async update(silent: boolean = false) {
+  async update(silent = false): Promise<void> {
+    if (this.updatePromise) {
+      this.updateQueued = true;
+      this.queuedSilent = this.queuedSilent && silent;
+      return this.updatePromise;
+    }
+
+    this.queuedSilent = silent;
+    this.updatePromise = (async () => {
+      do {
+        this.updateQueued = false;
+        const runSilent = this.queuedSilent;
+        this.queuedSilent = true;
+        await this.performUpdate(runSilent);
+      } while (this.updateQueued);
+    })().finally(() => {
+      this.updatePromise = null;
+      this.queuedSilent = true;
+    });
+
+    return this.updatePromise;
+  }
+
+  private async performUpdate(silent: boolean): Promise<void> {
     this.isDatabaseComplete = false;
     this.isDatabaseUpdating = true;
+    const centralNotePath = this.settings.getCentralNotePath();
 
     try {
-      if (this.plugin.CNexists()) {
-        let startTime = Date.now();
+      if (!centralNotePath || !this.settings.isValidCentralNotePath(centralNotePath)) {
+        this.resetGraphState();
         if (!silent) {
-          new Notice("Updating the Map of Content...");
+          new Notice("Choose a valid Markdown note as the Central Node.");
         }
-        devLog("Updating the Map of Content...");
-        await new Promise((r) => setTimeout(r, 0));
-        this.updateDB();
-        await new Promise((r) => setTimeout(r, 0));
+        return;
+      }
 
-        this.timesGetPathRan = 0;
-        this.updateDepthInformation();
+      const startTime = Date.now();
+      if (!silent) new Notice("Updating the Map of Content...");
+      devLog(`Updating the Map of Content from ${centralNotePath}...`);
 
-        this.allPaths.length = 0;
-        let pathSoFar: Path = {
-          allMembers: [this.settings.get("CN_path")],
-          items: [[this.settings.get("CN_path"), LINKED_CN]],
-        };
-        await new Promise((r) => setTimeout(r, 0));
+      await this.updateDB();
+      await nextFrame();
 
-        this.followPaths(pathSoFar);
-        await new Promise((r) => setTimeout(r, 0));
+      this.centralNotePath = centralNotePath;
+      this.shortestPathParents = new Map();
+      this.descendants = new Map();
+      this.updateDepthInformation(centralNotePath);
+      await nextFrame();
+      this.updateDiagnostics();
 
-        this.updateDescendants();
-
-        if (!silent) {
-          new Notice("Update complete");
-        }
-        devLog(
-          `Update complete, took ${String(
-            (Date.now() - startTime) / 1000
-          )} seconds`
-        );
-        devLog(`get paths ran ${this.timesGetPathRan} times`);
-
-        this.isDatabaseComplete = true;
+      this.isDatabaseComplete = true;
+      if (!silent) new Notice("Map of Content updated");
+      devLog(`Update complete, took ${(Date.now() - startTime) / 1000} seconds`);
+    } catch (error) {
+      console.error("[Map of Content] Failed to update Map of Content", error);
+      if (!silent) {
+        new Notice("Map of Content update failed. Check the developer console for details.");
       }
     } finally {
       this.isDatabaseUpdating = false;
@@ -87,253 +131,296 @@ export class DBManager {
     }
   }
 
-  getNoteFromPath(path: string): FileItem | undefined {
-    return this.db?.[path];
+  private resetGraphState(): void {
+    this.descendants = new Map();
+    this.shortestPathParents = new Map();
+    this.centralNotePath = undefined;
+    this.diagnostics = {
+      totalIncludedFiles: this.dbKeys.length,
+      reachableFiles: 0,
+      unreachableFiles: this.dbKeys.length,
+      orphanFiles: 0,
+      brokenLinks: 0,
+    };
+    this.isDatabaseComplete = false;
   }
 
-  /** return all paths that include a certain note. Only return the path up to that note*/
-  findPaths(path: string): Path[] {
-    let filteredPaths: Path[] = [];
-    let filteredPathsAsJson = JSON.stringify(filteredPaths);
-    this.allPaths.forEach((p: Path) => {
-      if (p.allMembers.includes(path)) {
-        if (p.allMembers.last() === path) {
-          filteredPaths.push(p);
-        } else {
-          let index = p.allMembers.indexOf(path) + 1;
-          let choppedOffPath = p.items.slice(0, index);
-          if (!filteredPathsAsJson.includes(JSON.stringify(choppedOffPath))) {
-            // return a path element containing only the parts of the path information up to the note in question
-            filteredPaths.push({
-              allMembers: p.allMembers.slice(0, index),
-              items: p.items.slice(0, index),
-            });
-            filteredPathsAsJson = JSON.stringify(filteredPaths);
-          }
-        }
-      }
-    });
+  getNoteFromPath(path: string): FileItem | undefined {
+    return this.db[path];
+  }
 
-    return filteredPaths;
+  findPaths(path: string): Path[] {
+    return this.findPathsDetailed(path).paths;
+  }
+
+  findPathsDetailed(path: string): PathSearchResult {
+    this.lastPathSearchTruncated = false;
+    if (!this.centralNotePath || !this.db[path]) return { paths: [], truncated: false };
+    if (path === this.centralNotePath) {
+      return { paths: [{ allMembers: [path], items: [[path, LINKED_CN]] }], truncated: false };
+    }
+
+    const parents = this.shortestPathParents.get(path);
+    if (!parents || parents.size === 0) return { paths: [], truncated: false };
+
+    const maxPaths = this.settings.get("max_shortest_paths");
+    const paths: string[][] = [];
+    const currentPath = [path];
+    const stack: Array<{ node: string; parents: string[]; index: number }> = [
+      { node: path, parents: [...parents], index: 0 },
+    ];
+
+    while (stack.length > 0) {
+      if (paths.length >= maxPaths) {
+        this.lastPathSearchTruncated = true;
+        break;
+      }
+
+      const frame = stack[stack.length - 1];
+      if (frame.node === this.centralNotePath) {
+        paths.push([...currentPath].reverse());
+        stack.pop();
+        currentPath.pop();
+        continue;
+      }
+
+      if (frame.index >= frame.parents.length) {
+        stack.pop();
+        currentPath.pop();
+        continue;
+      }
+
+      const parent = frame.parents[frame.index++];
+      currentPath.push(parent);
+      stack.push({
+        node: parent,
+        parents: [...(this.shortestPathParents.get(parent) ?? [])],
+        index: 0,
+      });
+    }
+
+    const result = paths.map((members) => ({
+      allMembers: members,
+      items: members.map((member, index) => {
+        if (index === 0) return [member, LINKED_CN] as [string, LinkDirection];
+        return [member, this.getLinkDirection(members[index - 1], member)] as [string, LinkDirection];
+      }),
+    }));
+    return { paths: result, truncated: this.lastPathSearchTruncated };
+  }
+
+  getLinkDirection(fromPath: string, toPath: string): LinkDirection {
+    const from = this.db[fromPath];
+    const to = this.db[toPath];
+    if (!from || !to) return LINKED_TO;
+
+    const linkedTo = from.linksTo.has(toPath);
+    const linkedFrom = to.linksTo.has(fromPath);
+    if (linkedTo && linkedFrom) return LINKED_BOTH;
+    if (linkedTo) return LINKED_TO;
+    return LINKED_FROM;
   }
 
   allNotes(): FileItem[] {
-    return this.dbEntries.map(([key, value]) => value);
+    return this.dbEntries.map(([, value]) => value);
   }
 
-  updateDB() {
+  async updateDB(): Promise<void> {
     devLog("Updating the library...");
-    // TODO - this is a hacky way to clear the db, find a better way - why is this necessary?
-    for (let note in this.db) {
-      delete this.db[note];
-    }
-    let vaultFiles = this.app.vault.getFiles();
-    devLog(`Total number of files in vault: ${vaultFiles.length}`);
+    const nextDb: DB = {};
+    const vaultFiles = this.app.vault.getFiles();
+    const currentPaths = new Set(vaultFiles.map((file) => file.path));
+    const currentCentral = this.settings.getCentralNotePath();
+    this.linkCache = new Map(
+      [...this.linkCache.entries()].filter(([path]) => currentPaths.has(path))
+    );
+
     let entriesCreatedCount = 0;
-    vaultFiles.forEach((file) => {
-      if (this.settings.isExcludedFile(file)) {
-        return;
-      }
-      entriesCreatedCount += 1;
-      this.db[file.path] = {
+    for (const file of vaultFiles) {
+      if (this.settings.isExcludedFile(file) || (this.settings.get("enable_tag_filter") && file.path !== currentCentral && !this.matchesTagFilter(file))) continue;
+      entriesCreatedCount++;
+      nextDb[file.path] = {
         path: file.path,
         extension: file.extension,
         linksTo: new Set<string>(),
         linkedFrom: new Set<string>(),
         distanceFromCn: null,
       };
-    });
+      if (entriesCreatedCount % 250 === 0) await nextFrame();
+    }
 
-    devLog(`Created ${entriesCreatedCount} new db entries`);
-
+    this.db = nextDb;
     this.dbEntries = Object.entries(this.db);
     this.dbKeys = Object.keys(this.db);
-
     this.fileHasDuplicatedName = new Map<string, boolean>();
-    let duplicateCheckedFilesCount = 0;
-    this.allNotes().forEach((note) => {
-      let fileName = getFileNameFromPath(note.path);
 
-      duplicateCheckedFilesCount += 1;
-      // TODO use something like a counter here that just counts up the occurrences of each file name
-      if (this.fileHasDuplicatedName.has(fileName)) {
-        // If the file name is encountered twice or more, set it's duplicate status to true
-        this.fileHasDuplicatedName.set(fileName, true);
+    const nameCounts = new Map<string, number>();
+    for (const note of this.allNotes()) {
+      const fileName = getFileNameFromPath(note.path);
+      nameCounts.set(fileName, (nameCounts.get(fileName) ?? 0) + 1);
+    }
+    for (const [fileName, count] of nameCounts) {
+      this.fileHasDuplicatedName.set(fileName, count > 1);
+    }
+
+    this.brokenLinksByNote = new Map();
+    const markdownNotes = this.allNotes().filter((note) => note.extension === "md");
+
+    for (let i = 0; i < markdownNotes.length; i++) {
+      const note = markdownNotes[i];
+      const file = this.app.vault.getAbstractFileByPath(note.path);
+      if (!(file instanceof TFile)) continue;
+
+      const cached = this.linkCache.get(note.path);
+      const metadataReady = Boolean(this.app.metadataCache.getCache(note.path));
+      const cacheMatches =
+        metadataReady && cached && cached.mtime === file.stat.mtime && cached.size === file.stat.size;
+
+      let validatedLinks: Set<string>;
+      let brokenCount = 0;
+      if (cacheMatches) {
+        validatedLinks = new Set(cached.links.filter((path) => Boolean(this.db[path])));
+        brokenCount = cached.brokenCount;
       } else {
-        this.fileHasDuplicatedName.set(fileName, false);
+        const result = this.getValidatedLinksFromNoteDetailed(note.path, note.path);
+        validatedLinks = result.links;
+        brokenCount = result.brokenCount;
+        if (metadataReady) {
+          this.linkCache.set(note.path, {
+            mtime: file.stat.mtime,
+            size: file.stat.size,
+            links: [...validatedLinks],
+            brokenCount,
+          });
+        } else {
+          this.linkCache.delete(note.path);
+        }
       }
-    });
 
-    devLog(`Checked ${duplicateCheckedFilesCount} files for duplicate names`);
+      this.db[note.path].linksTo = validatedLinks;
+      this.brokenLinksByNote.set(note.path, brokenCount);
+      for (const link of validatedLinks) {
+        this.db[link]?.linkedFrom.add(note.path);
+      }
 
-    this.dbEntries = Object.entries(this.db);
-
-    devLog("Analyzing links");
-
-    const markdownNotes = this.allNotes().filter(
-      (note) => note.extension === "md"
-    );
-
-    markdownNotes.forEach((note: FileItem) => {
-      let linksFromNote = this.getValidatedLinksFromNote(note.path, note.path);
-
-      this.db[note.path].linksTo = linksFromNote;
-
-      linksFromNote.forEach((link: string) => {
-        if (!this.db[link]) {
-          return;
-        }
-        if (!this.db[link].linkedFrom.has(note.path)) {
-          this.db[link].linkedFrom.add(note.path);
-        }
-      });
-    });
-  }
-
-  /** starting from the CN, follow all paths and store the information on how long the shortest path to each note is*/
-  updateDepthInformation() {
-    devLog(
-      "Analyzing distance from Central Note. CN path: " +
-        this.settings.get("CN_path")
-    );
-    let distanceFromCn = 1;
-    let previouslyCheckedLinks: string[] = []; // all the notes that have already been visited. dont visit them again to prevent endless loops
-    let links = [this.settings.get("CN_path")];
-    while (links.length > 0) {
-      let nextLoopsLinks = new Set<string>();
-      links.forEach((link: string) => {
-        let note = this.getNoteFromPath(link);
-        if (!note) {
-          return;
-        }
-        [...note.linksTo, ...note.linkedFrom].forEach((link: string) => {
-          if (!previouslyCheckedLinks.contains(link)) {
-            nextLoopsLinks.add(link);
-          }
-        });
-        if (
-          note.distanceFromCn == null ||
-          note.distanceFromCn > distanceFromCn
-        ) {
-          note.distanceFromCn = distanceFromCn;
-        }
-        previouslyCheckedLinks.push(link);
-      });
-      links = Array.from(nextLoopsLinks);
-      distanceFromCn += 1;
-    }
-  }
-
-  /**
-   * Recursive function that follows all possible paths from the CN that aren't unreasonably long or circular and stores them
-   * @param basePath the path to be extended in this iteration
-   */
-  followPaths(basePath: Path) {
-    this.timesGetPathRan += 1;
-
-    const note = this.db[basePath.allMembers.last()];
-
-    if (!note) {
-      return;
+      if (i % 100 === 0) await nextFrame();
     }
 
-    const newPathsToFollow: Path[] = [];
-    const notesLinkingToThisNoteToFollow = new Set(note.linkedFrom);
-
-    note.linksTo.forEach((link: string) => {
-      if (basePath.allMembers.includes(link)) {
-        return;
-      }
-      let linkDirectionToken = LINKED_TO;
-      if (notesLinkingToThisNoteToFollow.has(link)) {
-        notesLinkingToThisNoteToFollow.delete(link);
-        linkDirectionToken = LINKED_BOTH;
-      }
-      newPathsToFollow.push({
-        allMembers: basePath.allMembers.concat(link),
-        items: basePath.items.concat([[link, linkDirectionToken]]),
-      });
-    });
-
-    notesLinkingToThisNoteToFollow.forEach((link: string) => {
-      if (basePath.allMembers.includes(link)) {
-        return;
-      }
-      newPathsToFollow.push({
-        allMembers: basePath.allMembers.concat(link),
-        items: basePath.items.concat([[link, LINKED_FROM]]),
-      });
-    });
-
-    let pathHasNovelChildPath = false;
-
-    newPathsToFollow.forEach((newPath: Path) => {
-      // prevent meandering paths that are longer than the shortest path to the note
-      if (
-        newPath.allMembers.length >
-        this.getNoteFromPath(newPath.allMembers.last()).distanceFromCn
-      ) {
-        return;
-      }
-
-      this.followPaths(newPath);
-      pathHasNovelChildPath = true;
-    });
-
-    if (pathHasNovelChildPath) {
-      return;
-    }
-
-    this.allPaths.push(basePath);
+    this.settings.pruneExpansionState(new Set(this.dbKeys));
+    devLog(`Created ${entriesCreatedCount} db entries`);
   }
 
-  /** for every note, store all notes that come right after it in any path. this is for displaying the tree view */
-  updateDescendants() {
+  updateDepthInformation(centralNotePath: string): void {
+    for (const note of this.allNotes()) note.distanceFromCn = null;
+
+    const centralNote = this.getNoteFromPath(centralNotePath);
+    if (!centralNote) return;
+
+    const mode = this.settings.get("link_traversal_mode");
+    const queue: string[] = [centralNotePath];
+    centralNote.distanceFromCn = 1;
+    this.shortestPathParents = new Map([[centralNotePath, new Set<string>()]]);
     this.descendants = new Map();
 
-    let updateDescendantsLoopRanCounter = 0;
-    this.allPaths.forEach((path: Path) => {
-      path.allMembers
-        .slice(0, -1)
-        .forEach((notePath: string, index: number) => {
-          if (!this.descendants.has(notePath)) {
-            this.descendants.set(
-              notePath,
-              new Set<string>([path.allMembers[index + 1]])
-            );
-            return;
-          }
-          this.descendants.get(notePath).add(path.allMembers[index + 1]);
-        });
-      updateDescendantsLoopRanCounter += 1;
+    let index = 0;
+    while (index < queue.length) {
+      const currentPath = queue[index++];
+      const current = this.getNoteFromPath(currentPath);
+      if (!current || current.distanceFromCn == null) continue;
+
+      const nextDistance = current.distanceFromCn + 1;
+      const neighbours = this.getTraversalNeighbours(current, mode);
+
+      for (const link of neighbours) {
+        const note = this.getNoteFromPath(link);
+        if (!note) continue;
+
+        if (note.distanceFromCn == null) {
+          note.distanceFromCn = nextDistance;
+          this.shortestPathParents.set(link, new Set([currentPath]));
+          queue.push(link);
+        } else if (note.distanceFromCn === nextDistance) {
+          this.shortestPathParents.get(link)?.add(currentPath);
+        } else {
+          continue;
+        }
+
+        if (this.settings.get("map_scope") === "local" && nextDistance > this.settings.get("local_depth") + 1) continue;
+
+        let children = this.descendants.get(currentPath);
+        if (!children) {
+          children = new Set<string>();
+          this.descendants.set(currentPath, children);
+        }
+        children.add(link);
+      }
+    }
+  }
+
+  private getTraversalNeighbours(note: FileItem, mode: LinkTraversalMode): Set<string> {
+    if (mode === "outgoing") return new Set(note.linksTo);
+    if (mode === "incoming") return new Set(note.linkedFrom);
+    return new Set([...note.linksTo, ...note.linkedFrom]);
+  }
+
+  matchesTagFilter(file: TFile): boolean {
+    if (!this.settings.get("enable_tag_filter")) return true;
+    const cache = this.app.metadataCache.getFileCache(file);
+    const tags = new Set<string>();
+    for (const tag of cache?.tags ?? []) tags.add(tag.tag.replace(/^#/, "").toLowerCase());
+    const frontmatterTags = cache?.frontmatter?.tags;
+    if (Array.isArray(frontmatterTags)) for (const tag of frontmatterTags) if (typeof tag === "string") tags.add(tag.replace(/^#/, "").toLowerCase());
+    else if (typeof frontmatterTags === "string") for (const tag of frontmatterTags.split(",")) tags.add(tag.trim().replace(/^#/, "").toLowerCase());
+    const included = this.settings.get("included_tags").map((tag) => tag.toLowerCase());
+    const excluded = this.settings.get("excluded_tags").map((tag) => tag.toLowerCase());
+    if (excluded.some((tag) => tags.has(tag))) return false;
+    return included.length === 0 || included.some((tag) => tags.has(tag));
+  }
+
+  getSortedDescendants(path: string): string[] {
+    const children = [...(this.descendants.get(path) ?? [])];
+    const mode = this.settings.get("sort_mode");
+    const smart = this.settings.get("enable_smart_sort");
+    children.sort((a, b) => {
+      const left = this.db[a];
+      const right = this.db[b];
+      if (mode === "links" || smart) {
+        const degreeA = (left?.linksTo.size ?? 0) + (left?.linkedFrom.size ?? 0);
+        const degreeB = (right?.linksTo.size ?? 0) + (right?.linkedFrom.size ?? 0);
+        if (degreeA !== degreeB) return degreeB - degreeA;
+      }
+      if (mode === "modified") {
+        const fileA = this.app.vault.getAbstractFileByPath(a);
+        const fileB = this.app.vault.getAbstractFileByPath(b);
+        if (fileA instanceof TFile && fileB instanceof TFile && fileA.stat.mtime !== fileB.stat.mtime) return fileB.stat.mtime - fileA.stat.mtime;
+      }
+      if (mode === "path") return a.localeCompare(b);
+      return getFileNameFromPath(a).localeCompare(getFileNameFromPath(b), undefined, { sensitivity: "base" });
     });
-    devLog(
-      `update descendants loop ran ${updateDescendantsLoopRanCounter} times`
-    );
+    return children;
   }
 
   getValidatedLinkPath(link: string, notePath: string): string | undefined {
     const linkWithoutAnchor = link.split("#")[0].split("^")[0];
-
+    if (!linkWithoutAnchor) return undefined;
     const linkDestination = this.app.metadataCache.getFirstLinkpathDest(
       linkWithoutAnchor,
       notePath
     );
-
-    if (!linkDestination) {
-      return;
-    }
-
-    if (this.dbKeys && !this.dbKeys.contains(linkDestination.path)) {
-      // TODO why is this called before dbKeys is set?
-      return null;
-    }
-
+    if (!linkDestination || !this.db[linkDestination.path]) return undefined;
     return linkDestination.path;
   }
 
   getValidatedLinksFromNote(notePath: string, sourcePath: string): Set<string> {
+    return this.getValidatedLinksFromNoteDetailed(notePath, sourcePath).links;
+  }
+
+  getValidatedLinksFromNoteDetailed(
+    notePath: string,
+    sourcePath: string
+  ): { links: Set<string>; brokenCount: number } {
     const cachedMetadata = this.app.metadataCache.getCache(notePath);
+    if (!cachedMetadata) return { links: new Set<string>(), brokenCount: 0 };
 
     const linkCaches = [
       ...(cachedMetadata.links ?? []),
@@ -342,18 +429,88 @@ export class DBManager {
     ];
 
     const validatedLinks = new Set<string>();
-
+    let brokenCount = 0;
     for (const linkCache of linkCaches) {
-      const validatedLink = this.getValidatedLinkPath(
-        linkCache.link,
-        sourcePath
-      );
-      if (!validatedLink) {
-        continue;
-      }
-      validatedLinks.add(validatedLink);
+      const validatedLink = this.getValidatedLinkPath(linkCache.link, sourcePath);
+      if (validatedLink) validatedLinks.add(validatedLink);
+      else brokenCount++;
     }
 
-    return validatedLinks;
+    return { links: validatedLinks, brokenCount };
+  }
+
+  getDiagnostics(): MOCDiagnostics {
+    return { ...this.diagnostics };
+  }
+
+  private updateDiagnostics(): void {
+    const total = this.dbKeys.length;
+    const reachable = this.allNotes().filter((note) => note.distanceFromCn !== null).length;
+    let orphanFiles = 0;
+    for (const note of this.allNotes()) {
+      if (
+        note.path !== this.centralNotePath &&
+        note.linksTo.size === 0 &&
+        note.linkedFrom.size === 0
+      ) {
+        orphanFiles++;
+      }
+    }
+
+    let brokenLinks = 0;
+    for (const count of this.brokenLinksByNote.values()) brokenLinks += count;
+
+    this.diagnostics = {
+      totalIncludedFiles: total,
+      reachableFiles: reachable,
+      unreachableFiles: Math.max(0, total - reachable),
+      orphanFiles,
+      brokenLinks,
+    };
+  }
+
+  getSearchVisiblePaths(query: string, rootPath?: string): Set<string> {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return new Set(this.dbKeys);
+
+    const matching = this.dbKeys.filter((path) => {
+      const name = getFileNameFromPath(path).toLowerCase();
+      return path.toLowerCase().includes(normalized) || name.includes(normalized);
+    });
+
+    if (!rootPath || !this.db[rootPath]) return new Set(matching);
+
+    const branchNodes = new Set<string>();
+    const queue = [rootPath];
+    while (queue.length) {
+      const current = queue.pop();
+      if (!current || branchNodes.has(current)) continue;
+      branchNodes.add(current);
+      for (const child of this.descendants.get(current) ?? []) queue.push(child);
+    }
+
+    const visible = new Set<string>();
+    for (const match of matching) {
+      if (!branchNodes.has(match)) continue;
+      const stack = [match];
+      const visited = new Set<string>();
+      while (stack.length) {
+        const current = stack.pop();
+        if (!current || visited.has(current) || !branchNodes.has(current)) continue;
+        visited.add(current);
+        visible.add(current);
+        if (current === rootPath) continue;
+        for (const parent of this.shortestPathParents.get(current) ?? []) {
+          if (branchNodes.has(parent)) stack.push(parent);
+        }
+      }
+    }
+    return visible;
+  }
+
+  getBrokenLinks(): Array<{ notePath: string; count: number }> {
+    return [...this.brokenLinksByNote.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([notePath, count]) => ({ notePath, count }));
   }
 }
