@@ -1,212 +1,60 @@
 <script lang="ts">
   import type { App } from "obsidian";
   import type MOCPlugin from "../../main";
-  import { onMount } from "svelte";
-
   import { GetAllFolders } from "../../utils";
 
   export let app: App;
   export let plugin: MOCPlugin;
-  let excludedList;
-  const excludedFolders = plugin.settings.get("exluded_folders");
-  // TODO show all excluded files in TextEdit not list
-  // Select box based on https://www.c-sharpcorner.com/UploadFile/mahakgupta/add-and-remove-listbox-items-in-javascript/
+
+  let excludedFolders = [...plugin.settings.get("exluded_folders")];
+  let input = "";
+  let showAllHidden = false;
   const allFolders = GetAllFolders(app);
 
-  var listOptionsNo = 0;
-  let excludedFiles = allExcludedFiles();
-  onMount(() => {
-    // create select entries for all already excluded folders
-    excludedFolders.forEach((folder) => {
-      excludedList.options[listOptionsNo] = new Option(folder, folder);
-      listOptionsNo++;
-    });
-  });
+  $: excludedFiles = app.vault.getFiles().filter((file) =>
+    excludedFolders.some((path) => file.path === path || file.path.startsWith(`${path}/`))
+  );
 
-  function allExcludedFiles() {
-    return app.vault
-      .getFiles()
-      .map((file) => file.path)
-      .filter((pathToFile) => {
-        return excludedFolders.some((path: string) =>
-          pathToFile.startsWith(path)
-        );
-      });
+  async function addValue() {
+    const value = input.trim().replace(/\/+$/, "");
+    if (!value) return;
+    if (!allFolders.includes(value)) return;
+    if (!excludedFolders.includes(value)) {
+      excludedFolders = [...excludedFolders, value];
+      await plugin.settings.set({ exluded_folders: excludedFolders });
+    }
+    input = "";
   }
 
-  let excludePathInputValue;
-  let excludePathInput;
-  let showAllHidden = false;
-
-  /** update the list of exluded files and save the updated settings*/
-  function save() {
-    excludedFiles = allExcludedFiles();
-    plugin.settings.set({ exluded_folders: excludedFolders });
-  }
-
-  function addValue() {
-    if (!excludePathInputValue) {
-      return;
-    }
-    // Return if folder doesn't exist
-    if (!allFolders.contains(excludePathInputValue)) {
-      alert("Please choose a folder from the list");
-      return;
-    }
-    // Return if folder already on list
-    if (excludedFolders.contains(excludePathInputValue)) {
-      excludePathInput.value = "";
-      excludePathInputValue = "";
-      return;
-    }
-    // add option to select box
-    excludedList.options[listOptionsNo++] = new Option(
-      excludePathInputValue,
-      excludePathInputValue
-    );
-    excludedFolders.push(excludePathInputValue);
-
-    // reset input field
-    excludePathInput.value = "";
-    excludePathInputValue = "";
-
-    save();
-    return true;
-  }
-
-  function deleteValue() {
-    let s = 1;
-    let index;
-    if (excludedList.selectedIndex === -1) {
-      alert("Please select an item from the list");
-      return true;
-    }
-
-    while (s > 0) {
-      index = excludedList.selectedIndex;
-
-      if (index >= 0) {
-        excludedFolders.remove(excludedList.options[index].value);
-
-        excludedList.options[index] = null;
-
-        --listOptionsNo;
-      } else s = 0;
-    }
-    save();
-    return true;
+  async function deleteSelected(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    const selected = Array.from(select.selectedOptions).map((option) => option.value);
+    if (!selected.length) return;
+    excludedFolders = excludedFolders.filter((folder) => !selected.includes(folder));
+    await plugin.settings.set({ exluded_folders: excludedFolders });
   }
 </script>
 
 <h2>Excluded folders</h2>
-
-<div id="exluded-folders-container">
-  <div id="list-excluded">
-    <select
-      bind:this={excludedList}
-      id="excluded-select"
-      name="lstValue"
-      type="text"
-      multiple
-    />
-  </div>
-  <div id="add-remove-exluded">
-    <label for="Exluded-folders"> Add a folder:</label>
-    <input
-      bind:this={excludePathInput}
-      bind:value={excludePathInputValue}
-      list="exlude-folder"
-      id="Exluded-folders"
-      type="text"
-      placeholder="Start typing to see suggestions..."
-      style="width:300px;"
-    />
-    <datalist id="exlude-folder">
-      {#each allFolders as folderPath}
-        <option value={folderPath} />
-      {/each}
-    </datalist>
-    <br />
-    <br />
-    <input
-      type="button"
-      name="add"
-      value="Add"
-      on:click={() => {
-        addValue();
-      }}
-    /><br />
-    <input
-      type="button"
-      name="delete"
-      value="Delete"
-      on:click={() => {
-        deleteValue();
-      }}
-    /><br /><br />
-  </div>
-  <div id="currently-excluded">
-    Currently excluded files: {excludedFiles.length}
-    <input
-      type="button"
-      name="toggle-show-hidden"
-      value={showAllHidden ? "Hide" : "Show"}
-      on:click={() => {
-        showAllHidden = !showAllHidden;
-      }}
-    />
-    <div
-      style={showAllHidden ? "display:block" : "display:none"}
-      id="currently-excluded-list"
-    >
-      <ul>
-        {#each excludedFiles as filePath}
-          <li>{filePath}</li>
-        {/each}
-      </ul>
-    </div>
-  </div>
+<div class="controls">
+  <input bind:value={input} list="exclude-folder-options" placeholder="Folder path" />
+  <datalist id="exclude-folder-options">
+    {#each allFolders as folder}<option value={folder} />{/each}
+  </datalist>
+  <button type="button" on:click={() => void addValue()}>Add</button>
 </div>
+<select multiple size="5" aria-label="Excluded folders" on:change={deleteSelected}>
+  {#each excludedFolders as folder}<option value={folder}>{folder}</option>{/each}
+</select>
+<p>Currently excluded files: {excludedFiles.length}</p>
+<button type="button" on:click={() => (showAllHidden = !showAllHidden)}>{showAllHidden ? "Hide" : "Show"} excluded files</button>
+{#if showAllHidden}
+  <ul>{#each excludedFiles as file}<li>{file.path}</li>{/each}</ul>
+{/if}
 
 <style>
-  * {
-    font-size: 1em;
-  }
-
-  h2 {
-    text-align: left;
-  }
-
-  div#exluded-folders-container {
-    display: flex;
-    flex-wrap: wrap;
-    column-gap: 10px;
-  }
-
-  div#list-excluded {
-    width: 300px;
-  }
-
-  #excluded-select {
-    height: 300px;
-    width: 300px;
-    font-size: 1em;
-    overflow: auto;
-  }
-
-  #add-remove-exluded {
-    height: 300px;
-    width: 300px;
-  }
-
-  div#currently-excluded {
-    width: 600px;
-    max-height: 300px;
-    overflow: hidden;
-  }
-
-  div#currently-excluded-list {
-    overflow: auto;
-    max-height: 260px;
-  }
+  .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .controls input { flex: 1 1 240px; min-width: 0; }
+  select { max-width: 100%; width: 420px; }
+  ul { max-height: 240px; overflow: auto; }
 </style>

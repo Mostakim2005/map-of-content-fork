@@ -1,209 +1,55 @@
 <script lang="ts">
   import type { App } from "obsidian";
   import type MOCPlugin from "../../main";
-  import { onMount } from "svelte";
 
   export let app: App;
   export let plugin: MOCPlugin;
-  let excludedList;
 
-  const excludedFilenameComponents = plugin.settings.get(
-    "exluded_filename_components"
-  );
-  const allFiles = app.vault
-    .getFiles()
-    .map((file) => file.basename + "." + file.extension);
-
-  let excludedFiles = allExcludedFiles();
-  // TODO show all exluded files in TextEdit not list
-
-  // add all existing excluded folders to select element
-
-  let listOptionsNo = 0;
-  onMount(() => {
-    // create select entries for all already excluded filename components
-    excludedFilenameComponents.forEach((folder) => {
-      excludedList.options[listOptionsNo] = new Option(folder, folder);
-      listOptionsNo++;
-    });
-  });
-
-  function allExcludedFiles() {
-    return allFiles.filter((filename: string) => {
-      return excludedFilenameComponents.some((path: string) =>
-        filename.contains(path)
-      );
-    });
-  }
-
-  let excludePhraseInputValue;
-  let excludePhraseInput;
+  let excludedPhrases = [...plugin.settings.get("exluded_filename_components")];
+  let input = "";
   let showAllHidden = false;
 
-  /** update the list of exluded files and save the updated settings*/
-  function save() {
-    excludedFiles = allExcludedFiles();
-    plugin.settings.set({
-      exluded_filename_components: excludedFilenameComponents,
-    });
+  $: allFiles = app.vault.getFiles();
+  $: excludedFiles = allFiles.filter((file) => {
+    const filename = `${file.basename}.${file.extension}`;
+    return excludedPhrases.some((phrase) => phrase && filename.includes(phrase));
+  });
+
+  async function addValue() {
+    const value = input.trim();
+    if (!value || excludedPhrases.includes(value)) return;
+    excludedPhrases = [...excludedPhrases, value];
+    input = "";
+    await plugin.settings.set({ exluded_filename_components: excludedPhrases });
   }
 
-  function addValue() {
-    if (!excludePhraseInputValue) {
-      return;
-    }
-    // Return if folder already on list
-    if (excludedFilenameComponents.contains(excludePhraseInputValue)) {
-      excludePhraseInput.value = "";
-      excludePhraseInputValue = "";
-      return;
-    }
-
-    // add option to select box
-    excludedList.options[listOptionsNo++] = new Option(
-      excludePhraseInputValue,
-      excludePhraseInputValue
-    );
-    excludedFilenameComponents.push(excludePhraseInputValue);
-    // reset input field
-
-    excludePhraseInput.value = "";
-    excludePhraseInputValue = "";
-
-    save();
-    return true;
-  }
-
-  function deleteValue() {
-    let s = 1;
-    let selectedIndex;
-    if (excludedList.selectedIndex === -1) {
-      alert("Please select an item from the list");
-      return true;
-    }
-
-    while (s > 0) {
-      selectedIndex = excludedList.selectedIndex;
-
-      if (selectedIndex >= 0) {
-        excludedFilenameComponents.remove(
-          excludedList.options[selectedIndex].value
-        );
-
-        excludedList.options[selectedIndex] = null;
-
-        --listOptionsNo;
-      } else s = 0;
-    }
-    save();
-    return true;
+  async function deleteSelected(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    const selected = Array.from(select.selectedOptions).map((option) => option.value);
+    if (!selected.length) return;
+    excludedPhrases = excludedPhrases.filter((phrase) => !selected.includes(phrase));
+    await plugin.settings.set({ exluded_filename_components: excludedPhrases });
   }
 </script>
 
 <h2>Excluded filenames</h2>
-Filenames that contain these phrases will not be included in the Map of Content.
-That also includes the file extension.<br /><br />
-
-<div id="exlude-filenames">
-  <div id="list-excluded">
-    <select
-      bind:this={excludedList}
-      id="excluded-select"
-      name="lstValue"
-      type="text"
-      multiple
-    />
-  </div>
-  <div id="add-remove-exluded">
-    <label for="Exluded-phrases"> Add a phrase:</label>
-    <input
-      bind:this={excludePhraseInput}
-      bind:value={excludePhraseInputValue}
-      id="Exluded-phrases"
-      type="text"
-      style="width:300px;"
-    />
-    <br />
-    <br />
-    <input
-      type="button"
-      name="add"
-      value="Add"
-      on:click={() => {
-        addValue();
-      }}
-    /><br />
-    <input
-      type="button"
-      name="delete"
-      value="Delete"
-      on:click={() => {
-        deleteValue();
-      }}
-    /><br /><br />
-  </div>
-  <div id="currently-excluded">
-    Currently excluded files: {excludedFiles.length}
-    <input
-      type="button"
-      name="toggle-show-hidden"
-      value={showAllHidden ? "Hide" : "Show"}
-      on:click={() => {
-        showAllHidden = !showAllHidden;
-      }}
-    />
-    <div
-      style={showAllHidden ? "display:block" : "display:none"}
-      id="currently-excluded-list"
-    >
-      <ul>
-        {#each excludedFiles as file_path}
-          <li>{file_path}</li>
-        {/each}
-      </ul>
-    </div>
-  </div>
+<p>Files whose filename (including extension) contains one of these phrases are excluded.</p>
+<div class="controls">
+  <input bind:value={input} placeholder="Filename phrase" on:keydown={(event) => event.key === "Enter" && void addValue()} />
+  <button type="button" on:click={() => void addValue()}>Add</button>
 </div>
+<select multiple size="5" aria-label="Excluded filename phrases" on:change={deleteSelected}>
+  {#each excludedPhrases as phrase}<option value={phrase}>{phrase}</option>{/each}
+</select>
+<p>Currently excluded files: {excludedFiles.length}</p>
+<button type="button" on:click={() => (showAllHidden = !showAllHidden)}>{showAllHidden ? "Hide" : "Show"} excluded files</button>
+{#if showAllHidden}
+  <ul>{#each excludedFiles as file}<li>{file.path}</li>{/each}</ul>
+{/if}
 
 <style>
-  * {
-    font-size: 1em;
-  }
-
-  h2 {
-    text-align: left;
-  }
-
-  div#exlude-filenames {
-    display: flex;
-    flex-wrap: wrap;
-    column-gap: 10px;
-  }
-
-  div#list-excluded {
-    width: 300px;
-  }
-
-  #excluded-select {
-    height: 300px;
-    width: 300px;
-    font-size: 1em;
-    overflow: auto;
-  }
-
-  #add-remove-exluded {
-    height: 300px;
-    width: 300px;
-  }
-
-  div#currently-excluded {
-    width: 600px;
-    max-height: 300px;
-    overflow: hidden;
-  }
-
-  div#currently-excluded-list {
-    overflow: auto;
-    max-height: 260px;
-  }
+  .controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .controls input { flex: 1 1 240px; min-width: 0; }
+  select { max-width: 100%; width: 420px; }
+  ul { max-height: 240px; overflow: auto; }
 </style>
