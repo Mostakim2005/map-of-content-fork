@@ -1,6 +1,5 @@
 <div id="broken-link-container">
   <!-- from https://www.svgrepo.com/svg/4538/link -->
-  <!-- TODO what is this enable-background thing? -->
   <svg
     version="1.1"
     id="Layer_1"
@@ -121,7 +120,7 @@
     display: block;
     width: 100%;
     height: 100%;
-    opacity: 60%;
+    opacity: 0.6;
     position: relative;
     margin-left: auto;
     margin-right: auto;

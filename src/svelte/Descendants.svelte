@@ -1,204 +1,100 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { App } from "obsidian";
   import type { DBManager } from "../db";
+  import type MOCView from "../view";
   import { getDisplayName, NavigateToFile } from "../utils";
   import type { ExpandManager } from "./helpers/expandManager";
 
   export let notePath: string;
   export let db: DBManager;
   export let indentation: number;
-  export let view: any;
+  export let view: MOCView;
   export let app: App;
   export let expandManager: ExpandManager;
-  let isExpanded;
+  export let filterText = "";
+  export let visiblePaths: Set<string> = new Set();
 
-  const children = Array.from(db.descendants.get(notePath) || []);
+  $: children = db.getSortedDescendants(notePath);
+  $: normalizedFilter = filterText.trim().toLowerCase();
+  $: currentMatches = normalizedFilter === "" || visiblePaths.has(notePath);
+  $: isExpanded = normalizedFilter !== "" ? true : initialExpanded();
 
-  const darkModeDependentClass = document.body.classList.contains("theme-dark")
-    ? "dark-mode"
-    : "light-mode";
-
-  function resetExpanded(newMaxIndent: number) {
-    if (indentation === 0) {
-      isExpanded = true;
-    } else if (!view.plugin.settings.isExpanded(notePath)) {
-      isExpanded = false;
-    } else {
-      isExpanded = indentation < newMaxIndent;
-    }
+  function initialExpanded(): boolean {
+    if (indentation === 0) return true;
+    if (!view.plugin.settings.isExpanded(notePath)) return false;
+    return indentation < expandManager.initialMaxIndent;
   }
 
-  expandManager.registerIndentation(indentation);
+  const unregisterRedraw = expandManager.registerRedrawDescendantCallback((maxIndent) => {
+    if (indentation === 0) isExpanded = true;
+    else if (normalizedFilter !== "") isExpanded = true;
+    else isExpanded = view.plugin.settings.isExpanded(notePath) && indentation < maxIndent;
+  });
 
-  resetExpanded(expandManager.initialMaxIndent);
+  onDestroy(unregisterRedraw);
 
-  expandManager.registerRedrawDescendantCallback(resetExpanded);
+  function toggleExpanded(): void {
+    if (normalizedFilter !== "") return;
+    isExpanded = !isExpanded;
+    void view.plugin.settings.setExpanded(notePath, isExpanded);
+    if (isExpanded) {
+      expandManager.onManualExpand();
+    }
+  }
 </script>
 
-<!-- expand svg-->
-<svg display="none">
-  <symbol
-    id="expand-arrow-svg"
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 24 24"
-  >
-    <path d="M22 12l-20 12 5-12-5-12z" />
-  </symbol>
-</svg>
-<!--start descendants view-->
-{#if indentation === 0 && children.length === 0}
-  No descendants
-{:else}
-  <li class="container {darkModeDependentClass}">
-    <p>
-      {#if indentation === 0}
-        {getDisplayName(notePath, db)}
-      {:else}
-        {#if children.length > 0}
-          <span
-            class="expand-arrow"
-            on:click={() => {
-              isExpanded = !isExpanded;
-              view.plugin.settings.setExpanded(notePath, isExpanded);
-              if (isExpanded) {
-                expandManager.onManualExpand();
-                expandManager.registerIndentation(indentation + 1);
-              }
-            }}
-            ><div class="expand-button">
-              {#if isExpanded}
-                <svg class="svg expanded">
-                  <use href="#expand-arrow-svg" />
-                </svg>
-              {:else}<svg class="svg">
-                  <use href="#expand-arrow-svg" />
-                </svg>
-              {/if}
-            </div></span
-          >{/if}
-        <a
-          class="link"
-          title={notePath}
-          on:click={(event) => {
-            NavigateToFile(app, notePath, event);
-          }}
+{#if currentMatches && (indentation === 0 || children.length > 0)}
+  <div class="moc-tree-node" class:is-root={indentation === 0}>
+    <div class="tree-row">
+      {#if indentation > 0 && children.length > 0}
+        <button
+          class="expand-button"
+          type="button"
+          aria-label={isExpanded ? "Collapse descendants" : "Expand descendants"}
+          on:click={toggleExpanded}
         >
-          {getDisplayName(notePath, db)}</a
-        >
+          {isExpanded ? "▾" : "▸"}
+        </button>
+      {:else if indentation > 0}
+        <span class="expand-spacer"></span>
       {/if}
-    </p>
-    <ul>
-      {#if children.length > 0 && isExpanded}
+
+      {#if indentation === 0}
+        <strong title={notePath}>{getDisplayName(notePath, db)}</strong>
+      {:else}
+        <a class="link" title={notePath} on:click={(event) => void NavigateToFile(app, notePath, event)}>
+          {getDisplayName(notePath, db)}
+        </a>
+      {/if}
+    </div>
+
+    {#if children.length > 0 && isExpanded}
+      <div class="children">
         {#each children as child}
           <svelte:self
             {db}
             {app}
-            notePath={child}
-            indentation={indentation + 1}
             {view}
             {expandManager}
+            {filterText}
+            {visiblePaths}
+            notePath={child}
+            indentation={indentation + 1}
           />
         {/each}
-      {/if}
-    </ul>
-  </li>
+      </div>
+    {/if}
+  </div>
 {/if}
 
 <style>
-  a.link {
-    cursor: pointer;
-    text-decoration: none;
-  }
-
-  ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  li {
-    list-style: none;
-    margin: 0;
-    padding: 2px 0;
-  }
-
-  ul {
-    padding-left: 1em;
-  }
-
-  li {
-    padding-left: 1em;
-    border: 5px solid darkgray;
-    border-width: 0 0 1px 1px;
-  }
-
-  li.dark-mode {
-    padding-left: 1em;
-    border: 5px solid gray;
-    border-width: 0 0 1px 1px;
-  }
-
-  li.container {
-    border-bottom: 0px;
-  }
-
-  li p {
-    margin: 0;
-    position: relative;
-    top: 0em;
-    padding: 1px 0 1px 0;
-  }
-
-  li ul {
-    border-top: 1px solid darkgray;
-    margin-left: -1em;
-    padding-left: 2em;
-  }
-
-  li.dark-mode ul {
-    border-top: 1px solid gray;
-  }
-
-  ul li:last-child ul {
-    border-left: none;
-    margin-left: -17px;
-  }
-
-  .expand-arrow {
-    color: darkgrey;
-  }
-
-  .expand-arrow:hover {
-    color: gray;
-  }
-
-  div.expand-button {
-    display: inline;
-  }
-
-  div.expand-button svg.svg {
-    width: 14px;
-    height: 14px;
-    margin-top: 5px;
-  }
-
-  li.light-mode div.expand-button svg.svg {
-    fill: darkgrey;
-  }
-
-  li.light-mode div.expand-button svg.svg:hover {
-    fill: gray;
-  }
-
-  li.dark-mode div.expand-button svg.svg {
-    fill: gray;
-  }
-
-  li.dark-mode div.expand-button svg.svg:hover {
-    fill: lightgray;
-  }
-
-  div.expand-button svg.svg.expanded {
-    transform: rotate(90deg);
-  }
+  .moc-tree-node { margin: 0; }
+  .tree-row { display: flex; align-items: center; min-height: 28px; overflow-wrap: anywhere; }
+  .tree-row + .children { margin-left: 1rem; }
+  .expand-button { width: 28px; height: 28px; padding: 0; }
+  .expand-spacer { width: 28px; flex: 0 0 28px; }
+  .children { border-left: 1px solid var(--background-modifier-border); padding-left: 0.5rem; }
+  .link { cursor: pointer; }
+  .is-root > .tree-row { font-weight: 600; }
 </style>

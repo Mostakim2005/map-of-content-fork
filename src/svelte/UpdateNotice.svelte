@@ -1,64 +1,26 @@
 <script lang="ts">
   import type MOCPlugin from "../main";
+  import type MOCView from "../view";
 
-  export let view: any;
+  export let view: MOCView;
   export let plugin: MOCPlugin;
-  const settings = plugin.settings;
 
-  const darkModeDependentClass = document.body.classList.contains("theme-dark")
-    ? "dark-mode"
-    : "light-mode";
+  async function dismiss(): Promise<void> {
+    await plugin.settings.set({ do_show_update_notice: false });
+    view.rerender();
+  }
 </script>
 
-<div id="all-container">
-  <div id="main-moc-div" class={darkModeDependentClass}>
-    <h3 style="text-align:center">This plugin has been updated</h3>
-
-    The latest changes are:
-    <ul>
-      <li>
-        Added a settings option to toggle whether the paths to the current note
-        are displayed or not (show only it's descendants)
-      </li>
-      <li>
-        For better readability, links in the view are no longer underlined
-      </li>
-    </ul>
-    See&nbsp;<a
-      href="https://github.com/Robin-Haupt-1/Obsidian-Map-of-Content/releases"
-    >
-      here</a
-    >
-    for a complete history of all changes.<br /><br />
-    <br /><br />
-    <button
-      on:click={() => {
-        settings.set({ do_show_update_notice: false });
-        view.rerender();
-      }}
-      style="display:block;margin:auto;"
-      >Okay
-    </button>
-  </div>
+<div class="update-notice">
+  <h3>This plugin has been updated</h3>
+  <p>
+    Map of Content now includes stronger graph/update handling, configurable path limits,
+    safer settings and lifecycle management, quicker Central Node switching, diagnostics,
+    search, and improved large-vault behavior.
+  </p>
+  <button type="button" on:click={() => void dismiss()}>Okay</button>
 </div>
 
 <style>
-  div#all-container {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
-
-  div#main-moc-div {
-    padding: initial;
-    width: initial;
-    height: initial;
-    position: initial;
-    overflow: auto;
-    flex: 1;
-  }
-
-  div#main-moc-div.dark-mode {
-    color: #dcddde;
-  }
+  .update-notice { padding: 1rem; text-align: center; }
 </style>

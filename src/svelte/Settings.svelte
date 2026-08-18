@@ -1,163 +1,247 @@
 <script lang="ts">
-  import { App, Notice, TFile } from "obsidian";
+  import { App, Notice } from "obsidian";
   import type MOCPlugin from "../main";
-  import { devLog } from "../utils";
+  import type { CentralNoteMode } from "../types";
   import ExcludedFolders from "./settings/ExcludedFolders.svelte";
   import ExcludedFilenames from "./settings/ExcludedFilenames.svelte";
+  import { getFileNameFromPath } from "../utils";
+  import ProfileModal from "../profile-modal";
+  import type { SortMode } from "../types";
 
   export let app: App;
   export let plugin: MOCPlugin;
 
-  let cnInput;
+  let cnPathInputValue = plugin.settings.get("CN_path");
+  let centralMode: CentralNoteMode = plugin.settings.get("central_note_mode");
+  let centralPresets = [...plugin.settings.get("central_note_presets")];
+  let autoExpandDepth = plugin.settings.get("auto_expand_depth");
+  let traversalMode = plugin.settings.get("link_traversal_mode");
+  let maxShortestPaths = plugin.settings.get("max_shortest_paths");
+  let showPaths = plugin.settings.get("do_show_paths_to_note");
+  let pathStartsAtCN = plugin.settings.get("MOC_path_starts_at_CN");
+  let rememberExpanded = plugin.settings.get("do_remember_expanded");
+  let autoUpdate = plugin.settings.get("auto_update_on_file_change");
+  let sortMode: SortMode = plugin.settings.get("sort_mode");
+  let tagFilter = plugin.settings.get("enable_tag_filter");
+  let smartSort = plugin.settings.get("enable_smart_sort");
+  let includedTags = plugin.settings.get("included_tags").join(", ");
+  let excludedTags = plugin.settings.get("excluded_tags").join(", ");
+  let profiles = [...plugin.settings.get("moc_profiles")];
+  let mapScope = plugin.settings.get("map_scope");
+  let localDepth = plugin.settings.get("local_depth");
+  let excludeGenerated = plugin.settings.get("exclude_generated_moc_notes");
 
-  // TODO check the db is complete before allow settings changes (maybe have this svelte only do that and load all other components from other svelte files)
-  // TODO lazy load all the file names and folders?
+  const refresh = () => {
+    centralPresets = [...plugin.settings.get("central_note_presets")];
+    profiles = [...plugin.settings.get("moc_profiles")];
+  };
 
-  // get list of all files for dropdown menu
-  let allFiles = app.vault.getFiles().map((file: TFile) => file.path);
-  devLog("Central note path: " + plugin.settings.get("CN_path"));
-  let cnPathInputValue;
-
-  const updateCNPath = () => {
-    if (!cnPathInputValue) {
+  const updateCNPath = async () => {
+    const path = cnPathInputValue.trim();
+    if (!path || !(await plugin.settings.setFixedCentralNote(path, true))) {
+      new Notice("Choose a valid non-excluded Markdown note.");
       return;
     }
-    // change TLI path
-    plugin.settings.set({ CN_path: cnPathInputValue });
-    devLog("New central note path: " + cnPathInputValue);
-    document.getElementById("cn-path-input").textContent = cnPathInputValue;
-    new Notice("New Central Note path saved");
+    centralMode = "fixed";
+    cnPathInputValue = path;
+    refresh();
+  };
 
-    // clear selection dropdown list
-    cnInput.value = "";
-    cnPathInputValue = "";
+  const setCentralMode = async (mode: CentralNoteMode) => {
+    const ok = mode === "current"
+      ? await plugin.settings.useCurrentNoteAsCentralNote()
+      : mode === "automatic"
+        ? (await plugin.settings.set({ central_note_mode: "automatic" }), true)
+        : await plugin.settings.useFixedCentralNote();
+    if (!ok) {
+      centralMode = plugin.settings.get("central_note_mode");
+      new Notice(mode === "current" ? "Open a non-excluded Markdown note first." : "Choose a valid fixed Central Node first.");
+      return;
+    }
+    centralMode = mode;
+  };
+
+  const addCurrentAsFavorite = async () => {
+    const file = app.workspace.getActiveFile();
+    if (!file || file.extension !== "md" || plugin.settings.isExcludedFile(file)) {
+      new Notice("Open a non-excluded Markdown note first.");
+      return;
+    }
+    await plugin.settings.addCentralNotePreset(file.path);
+    refresh();
+  };
+
+  const removeFavorite = async (path: string) => {
+    await plugin.settings.removeCentralNotePreset(path);
+    refresh();
+  };
+
+  const useFavorite = async (path: string) => {
+    if (await plugin.settings.setFixedCentralNote(path, false)) {
+      centralMode = "fixed";
+      cnPathInputValue = path;
+    } else {
+      await removeFavorite(path);
+      new Notice("That favorite no longer exists and was removed.");
+    }
+  };
+
+  const saveBoolean = async (key: "do_show_paths_to_note" | "MOC_path_starts_at_CN" | "do_remember_expanded" | "auto_update_on_file_change", value: boolean) => {
+    await plugin.settings.set({ [key]: value });
+  };
+
+  const saveTags = async () => {
+    const parse = (value: string) => Array.from(new Set(value.split(",").map((tag) => tag.trim().replace(/^#/, "")).filter(Boolean)));
+    await plugin.settings.set({ included_tags: parse(includedTags), excluded_tags: parse(excludedTags) });
+    includedTags = plugin.settings.get("included_tags").join(", ");
+    excludedTags = plugin.settings.get("excluded_tags").join(", ");
   };
 </script>
 
 <div id="settings-container">
-  <div class="path">
-    <h2>Path of your Central Note</h2>
-    Current path:&nbsp;<span id="cn-path-input"
-      >{plugin.settings.get("CN_path")}</span
-    ><br />
-    <label for="CN-select"> New path:</label>
-    <input
-      type="text"
-      bind:this={cnInput}
-      bind:value={cnPathInputValue}
-      list="notes"
-      id="CN-select"
-      placeholder="Start typing to see suggestions..."
-    />
-
-    <datalist id="notes">
-      {#each allFiles as filepath}
-        <option value={filepath} />
-      {/each}
-    </datalist>
-
-    <button
-      id="update-CN-path-button"
-      type="button"
-      on:click={() => {
-        updateCNPath();
-      }}
-      >Save
-    </button>
+  <div class="hero">
+    <div>
+      <h1>Map of Content</h1>
+      <p>Keep the core MOC simple. Enable only the perspectives and tools you actually use.</p>
+    </div>
   </div>
-  <br />
-  <div>
-    <h2>Auto-updating the Map of Content</h2>
-    <label for="auto-update-file-switch"
-      >Update when switching between files
-    </label><input
-      type="checkbox"
-      id="auto-update-file-switch"
-      on:click={() => {
-        plugin.settings.set({
-          auto_update_on_file_change: !plugin.settings.get(
-            "auto_update_on_file_change"
-          ),
-        });
-      }}
-      checked={plugin.settings.get("auto_update_on_file_change")}
-    />
-  </div>
-  <br />
-  <div>
-    <h2>Path and descendants</h2>
 
-    <label for="do_show_paths_to_note"
-      >Display the paths from the Central Note to the current note
-    </label><input
-      type="checkbox"
-      id="do_show_paths_to_note"
-      on:click={() => {
-        plugin.settings.set({
-          do_show_paths_to_note: !plugin.settings.get("do_show_paths_to_note"),
-        });
-      }}
-      checked={plugin.settings.get("do_show_paths_to_note") ? "checked" : ""}
-    />
-    <br />
-    <label for="MOC_path_starts_at_CN_checkbox"
-      >Display the path from the Central Note starting at the Central Note
-    </label><input
-      type="checkbox"
-      id="MOC_path_starts_at_CN_checkbox"
-      on:click={() => {
-        plugin.settings.set({
-          MOC_path_starts_at_CN: !plugin.settings.get("MOC_path_starts_at_CN"),
-        });
-      }}
-      checked={plugin.settings.get("MOC_path_starts_at_CN") ? "checked" : ""}
-    />
+  <div class="section-card">
+    <h2>Central Node</h2>
+    <p class="muted">Choose one stable perspective, follow the current note, or let the plugin pick the nearest saved topic.</p>
+    <label for="central-node-mode">Mode</label>
+    <select id="central-node-mode" bind:value={centralMode} on:change={() => void setCentralMode(centralMode)}>
+      <option value="fixed">Fixed Central Node</option>
+      <option value="current">Current Note</option>
+      <option value="automatic">Automatic from favorites</option>
+    </select>
 
-    <br />
-    <label for="do_remember_expanded_checkbox"
-      >Remember whether a file's descendants are shown or hidden
-    </label><input
-      type="checkbox"
-      id="do_remember_expanded_checkbox"
-      on:click={() => {
-        plugin.settings.set({
-          do_remember_expanded: !plugin.settings.get("do_remember_expanded"),
-        });
-      }}
-      checked={plugin.settings.get("do_remember_expanded")}
-    />
+    {#if centralMode === "fixed"}
+      <div class="row">
+        <input class="grow" id="CN-select" bind:value={cnPathInputValue} type="text" placeholder="Vault/path/to/note.md" />
+        <button type="button" on:click={updateCNPath}>Save</button>
+      </div>
+    {/if}
+    <div class="row">
+      <button type="button" on:click={() => plugin.chooseCentralNote()}>Choose note…</button>
+      <button type="button" on:click={addCurrentAsFavorite}>Add current to favorites</button>
+    </div>
+
+    {#if centralPresets.length > 0}
+      <h3>Favorites</h3>
+      <ul class="favorites">
+        {#each centralPresets as preset}
+          <li>
+            <span title={preset}>{getFileNameFromPath(preset)}</span>
+            <button type="button" on:click={() => void useFavorite(preset)}>Use</button>
+            <button type="button" class="quiet" on:click={() => void removeFavorite(preset)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    <div class="row profile-actions">
+      <button type="button" on:click={() => new ProfileModal(plugin, "save", refresh).open()}>Save current profile</button>
+      <button type="button" on:click={() => new ProfileModal(plugin, "choose", refresh).open()} disabled={profiles.length === 0}>Choose profile</button>
+    </div>
   </div>
-  <br />
-  <ExcludedFolders {app} {plugin} />
-  <ExcludedFilenames {app} {plugin} />
-  <p>
-    For support, bug reports or suggesting feature ideas, visit the plugin's <a
-      href="https://github.com/Robin-Haupt-1/Obsidian-Map-of-Content"
-    >
-      GitHub page</a
-    >.<br /><br />
-  </p>
+
+  <div class="section-card">
+    <h2>Graph perspective</h2>
+    <div class="grid">
+      <label>Map scope
+        <select bind:value={mapScope} on:change={() => void plugin.settings.set({ map_scope: mapScope })}>
+          <option value="full">Full reachable MOC</option>
+          <option value="local">Local neighborhood</option>
+        </select>
+      </label>
+      <label>Local depth
+        <input type="number" min="1" max="50" bind:value={localDepth} disabled={mapScope !== "local"} on:change={() => void plugin.settings.set({ local_depth: Number(localDepth) })} />
+      </label>
+      <label>Link traversal
+        <select bind:value={traversalMode} on:change={() => void plugin.settings.set({ link_traversal_mode: traversalMode })}>
+          <option value="both">Both directions</option>
+          <option value="outgoing">Outgoing links only</option>
+          <option value="incoming">Incoming links only</option>
+        </select>
+      </label>
+      <label>Sort descendants
+        <select bind:value={sortMode} on:change={() => void plugin.settings.set({ sort_mode: sortMode })}>
+          <option value="alpha">Alphabetical</option>
+          <option value="links">Most connected</option>
+          <option value="modified">Recently modified</option>
+          <option value="path">Full path</option>
+        </select>
+      </label>
+      <label>Automatic expansion depth
+        <input type="number" min="0" max="50" bind:value={autoExpandDepth} on:change={() => void plugin.settings.set({ auto_expand_depth: Number(autoExpandDepth) })} />
+      </label>
+      <label>Maximum shortest paths
+        <input type="number" min="1" max="5000" bind:value={maxShortestPaths} on:change={() => void plugin.settings.set({ max_shortest_paths: Number(maxShortestPaths) })} />
+      </label>
+    </div>
+    <label class="toggle"><input type="checkbox" bind:checked={smartSort} on:change={() => void plugin.settings.set({ enable_smart_sort: smartSort })} /> Smart-sort connected notes to the top</label>
+    <p class="muted">Local neighborhood is an optional compact view around the active Central Node. It does not modify notes or links.</p>
+    <label class="toggle"><input type="checkbox" bind:checked={excludeGenerated} on:change={() => void plugin.settings.set({ exclude_generated_moc_notes: excludeGenerated })} /> Keep generated MOC notes out of the graph</label>
+    <p class="muted">Smart sorting is optional and only changes ordering; it never changes the underlying graph.</p>
+  </div>
+
+  <div class="section-card">
+    <h2>Optional tag perspective</h2>
+    <label class="toggle"><input type="checkbox" bind:checked={tagFilter} on:change={() => void plugin.settings.set({ enable_tag_filter: tagFilter })} /> Enable tag filtering</label>
+    {#if tagFilter}
+      <div class="grid">
+        <label>Include tags
+          <input bind:value={includedTags} placeholder="#physics, #engineering" on:change={() => void saveTags()} />
+        </label>
+        <label>Exclude tags
+          <input bind:value={excludedTags} placeholder="#archive, #private" on:change={() => void saveTags()} />
+        </label>
+      </div>
+      <p class="muted">Filtering changes the graph perspective, not your notes or links. The active Central Node is always retained.</p>
+    {/if}
+  </div>
+
+  <div class="section-card">
+    <h2>Display and updates</h2>
+    <label class="toggle"><input type="checkbox" bind:checked={autoUpdate} on:change={() => void saveBoolean("auto_update_on_file_change", autoUpdate)} /> Update when notes change</label>
+    <label class="toggle"><input type="checkbox" bind:checked={showPaths} on:change={() => void saveBoolean("do_show_paths_to_note", showPaths)} /> Show shortest paths to the current note</label>
+    <label class="toggle"><input type="checkbox" bind:checked={pathStartsAtCN} on:change={() => void saveBoolean("MOC_path_starts_at_CN", pathStartsAtCN)} /> Display paths from the Central Node</label>
+    <label class="toggle"><input type="checkbox" bind:checked={rememberExpanded} on:change={() => void saveBoolean("do_remember_expanded", rememberExpanded)} /> Remember expanded/collapsed descendants</label>
+  </div>
+
+  <div class="section-card compact">
+    <h2>Vault boundaries</h2>
+    <ExcludedFolders {app} {plugin} />
+    <ExcludedFilenames {app} {plugin} />
+  </div>
+
+  <div class="hint">
+    <strong>Quick controls</strong>
+    <span>Central Node, diagnostics, path explanation, sorting, tag filtering, profiles, and MOC-note generation are also available from commands or the MOC toolbar.</span>
+  </div>
 </div>
 
 <style>
-  #settings-container {
-    position: relative;
-    height: 100%;
-    width: 100%;
-  }
-
-  #CN-select {
-    min-width: 200px;
-    width: 50%;
-    font-size: 1em;
-  }
-
-  #update-CN-path-button {
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  h2 {
-    text-align: left;
-  }
+  #settings-container { max-width: 880px; padding: 0.25rem 0.25rem 2rem; }
+  .hero { padding: 0.25rem 0 1rem; }
+  h1 { margin: 0 0 0.25rem; font-size: 1.6rem; letter-spacing: -0.02em; }
+  h2 { margin: 0 0 0.6rem; font-size: 1.05rem; }
+  h3 { margin: 1rem 0 0.5rem; font-size: 0.9rem; }
+  .section-card { border: 1px solid var(--background-modifier-border); background: var(--background-primary-alt); border-radius: 12px; padding: 1rem; margin: 0 0 0.8rem; }
+  .compact { padding-bottom: 0.4rem; }
+  .row, .profile-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.65rem 0; }
+  .grow { flex: 1 1 260px; min-width: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.75rem; }
+  label { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.6rem 0; font-weight: 500; }
+  .toggle { display: block; font-weight: 400; }
+  .toggle input { margin-right: 0.4rem; }
+  select, input { min-width: 0; }
+  .favorites { margin: 0; padding-left: 0; list-style: none; }
+  .favorites li { display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid var(--background-modifier-border); padding: 0.55rem 0; }
+  .favorites span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .quiet { opacity: 0.75; }
+  .muted { opacity: 0.72; }
+  .hint { display: flex; gap: 0.55rem; align-items: flex-start; padding: 0.8rem 0.9rem; border-radius: 10px; background: var(--background-secondary); color: var(--text-muted); }
+  @media (max-width: 520px) { .section-card { border-radius: 10px; padding: 0.8rem; } .profile-actions button { flex: 1 1 100%; } }
 </style>
