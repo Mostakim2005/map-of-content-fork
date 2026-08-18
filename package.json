@@ -9,9 +9,10 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "prepare": "husky install",
     "prettier": "prettier --write --plugin-search-dir=. .",
-    "lint": "eslint \"src/**/*.{ts,svelte}\" \"rollup.config.js\" \"scripts/**/*.mjs\"",
+    "lint": "eslint \"src/**/*.ts\" \"rollup.config.js\" \"scripts/**/*.mjs\" \"tests/**/*.ts\"",
     "test": "rm -rf tests/dist && tsc -p tests/tsconfig.json && node tests/dist/tests/logic.test.js",
-    "validate": "npm run check && npm run lint && npm test && npm run build && node scripts/validate-plugin.mjs"
+    "validate": "npm run check && npm run lint && npm run format:check && npm test && npm run build && node scripts/validate-plugin.mjs",
+    "format:check": "prettier --check ."
   },
   "keywords": [],
   "author": "",

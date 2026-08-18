@@ -2,7 +2,6 @@ import typescript from "@rollup/plugin-typescript";
 import { nodeResolve } from "@rollup/plugin-node-resolve";
 import commonjs from "@rollup/plugin-commonjs";
 import svelte from "rollup-plugin-svelte";
-import sveltePreprocess from "svelte-preprocess";
 import autoPreprocess from "svelte-preprocess";
 import css from "rollup-plugin-css-only";
 
