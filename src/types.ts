@@ -38,6 +38,11 @@ export interface MOCProfile {
   sortMode: SortMode;
   includedTags: string[];
   excludedTags: string[];
+  enableTagFilter: boolean;
+  enableSmartSort: boolean;
+  mapScope: "full" | "local";
+  localDepth: number;
+  maxShortestPaths: number;
 }
 
 export interface LinkCacheEntry {
@@ -58,4 +63,13 @@ export interface MOCDiagnostics {
   unreachableFiles: number;
   orphanFiles: number;
   brokenLinks: number;
+  linkCount: number;
+  cachedNotes: number;
+  lastUpdateMs: number;
+  lastPathCount: number;
+  lastPathSearchTruncated: boolean;
+  centralNotePath?: string;
+  mapScope: "full" | "local";
+  localDepth?: number;
+  traversalMode: LinkTraversalMode;
 }

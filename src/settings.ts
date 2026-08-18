@@ -2,7 +2,8 @@ import { PluginSettingTab, TFile } from "obsidian";
 import type MOCPlugin from "./main";
 import Settings from "./svelte/Settings.svelte";
 import { devLog } from "./utils";
-import type { CentralNoteMode, LinkTraversalMode, MOCProfile, SortMode } from "./types";
+import type { CentralNoteMode, FileItem, LinkTraversalMode, MOCProfile, SortMode } from "./types";
+import { chooseAutomaticCentralNode } from "./core/logic";
 
 export interface MOCSettings {
   CN_path: string;
@@ -36,7 +37,7 @@ export const DEFAULT_SETTINGS: MOCSettings = {
   CN_path: "Central Note.md",
   exluded_folders: [],
   exluded_filename_components: [],
-  settings_version: "1.7.0",
+  settings_version: "1.8.0",
   do_show_update_notice: false,
   auto_update_on_file_change: true,
   do_remember_expanded: false,
@@ -71,6 +72,7 @@ const GRAPH_AFFECTING_SETTINGS = new Set<keyof MOCSettings>([
   "enable_tag_filter",
   "map_scope",
   "local_depth",
+  "exclude_generated_moc_notes",
 ]);
 
 export class SettingsManager {
@@ -84,6 +86,7 @@ export class SettingsManager {
     "1.3.0",
     "1.5.0",
     "1.7.0",
+    "1.8.0",
   ];
   silentGenericUpdateVersions = [
     "0.1.15",
@@ -95,6 +98,8 @@ export class SettingsManager {
     "1.4.1",
   ];
   private savePromise: Promise<void> = Promise.resolve();
+  private temporaryLocalCentralNote: string | undefined;
+  private temporaryLocalDepth = 4;
 
   constructor(plugin: MOCPlugin) {
     this.plugin = plugin;
@@ -121,7 +126,15 @@ export class SettingsManager {
 
     if (this.plugin.db && changedKeys.some((key) => GRAPH_AFFECTING_SETTINGS.has(key))) {
       void this.plugin.db.update(true);
-    } else if (changedKeys.some((key) => key === "auto_expand_depth" || key === "do_remember_expanded")) {
+    } else if (changedKeys.some((key) => [
+      "auto_expand_depth",
+      "do_remember_expanded",
+      "sort_mode",
+      "enable_smart_sort",
+      "max_shortest_paths",
+      "do_show_paths_to_note",
+      "MOC_path_starts_at_CN",
+    ].includes(key))) {
       this.plugin.rerender();
     }
   }
@@ -131,6 +144,7 @@ export class SettingsManager {
   }
 
   getCentralNotePath(): string | undefined {
+    if (this.temporaryLocalCentralNote) return this.temporaryLocalCentralNote;
     if (this.get("central_note_mode") === "current" || this.get("central_note_mode") === "automatic") {
       if (this.get("central_note_mode") === "automatic") return this.getAutoCentralNotePath();
       const activeFile = this.plugin.app.workspace.getActiveFile();
@@ -142,6 +156,33 @@ export class SettingsManager {
     return this.get("CN_path") || undefined;
   }
 
+  isTemporaryLocalExploration(): boolean {
+    return Boolean(this.temporaryLocalCentralNote);
+  }
+
+  getEffectiveMapScope(): "full" | "local" {
+    return this.temporaryLocalCentralNote ? "local" : this.get("map_scope");
+  }
+
+  getEffectiveLocalDepth(): number {
+    return this.temporaryLocalCentralNote ? this.temporaryLocalDepth : this.get("local_depth");
+  }
+
+  async startTemporaryLocalExploration(path: string, depth = 4): Promise<boolean> {
+    if (!this.isValidCentralNotePath(path)) return false;
+    this.temporaryLocalCentralNote = path;
+    this.temporaryLocalDepth = Math.max(1, Math.min(50, Math.floor(depth)));
+    if (this.plugin.db) void this.plugin.db.update(true);
+    this.plugin.rerender();
+    return true;
+  }
+
+  stopTemporaryLocalExploration(): void {
+    this.temporaryLocalCentralNote = undefined;
+    if (this.plugin.db) void this.plugin.db.update(true);
+    this.plugin.rerender();
+  }
+
   isCurrentNoteCentral(): boolean {
     return this.get("central_note_mode") === "current" || this.get("central_note_mode") === "automatic";
   }
@@ -151,21 +192,19 @@ export class SettingsManager {
     if (!active || active.extension !== "md" || this.isExcludedFile(active)) return undefined;
     const candidates = this.get("central_note_presets")
       .filter((path) => this.isValidCentralNotePath(path))
-      .map((path) => this.plugin.db.getNoteFromPath(path));
+      .map((path) => this.plugin.db.getNoteFromPath(path))
+      .filter((candidate): candidate is FileItem => Boolean(candidate));
     if (!candidates.length) return active.path;
     const activeLinks = this.plugin.db.getValidatedLinksFromNote(active.path, active.path);
-    let bestPath = active.path;
-    let bestScore = -1;
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      let score = candidate.linksTo.has(active.path) || activeLinks.has(candidate.path) ? 2 : 0;
-      score += candidate.linkedFrom.has(active.path) ? 1 : 0;
-      if (score > bestScore) {
-        bestScore = score;
-        bestPath = candidate.path;
-      }
-    }
-    return bestPath;
+    return chooseAutomaticCentralNode(
+      active.path,
+      candidates.map((candidate) => ({
+        path: candidate.path,
+        directOutgoing: candidate.linksTo.has(active.path) || activeLinks.has(candidate.path),
+        directIncoming: candidate.linkedFrom.has(active.path),
+        degree: candidate.linksTo.size + candidate.linkedFrom.size,
+      })),
+    );
   }
 
   isValidCentralNotePath(path: string | undefined): path is string {
@@ -343,6 +382,11 @@ export class SettingsManager {
       sortMode: this.get("sort_mode"),
       includedTags: [...this.get("included_tags")],
       excludedTags: [...this.get("excluded_tags")],
+      enableTagFilter: this.get("enable_tag_filter"),
+      enableSmartSort: this.get("enable_smart_sort"),
+      mapScope: this.get("map_scope"),
+      localDepth: this.get("local_depth"),
+      maxShortestPaths: this.get("max_shortest_paths"),
     };
     const profiles = this.get("moc_profiles").filter((p) => p.name !== trimmed);
     await this.set({ moc_profiles: [profile, ...profiles], active_profile_name: trimmed });
@@ -360,6 +404,11 @@ export class SettingsManager {
       sort_mode: profile.sortMode,
       included_tags: [...profile.includedTags],
       excluded_tags: [...profile.excludedTags],
+      enable_tag_filter: profile.enableTagFilter,
+      enable_smart_sort: profile.enableSmartSort,
+      map_scope: profile.mapScope,
+      local_depth: profile.localDepth,
+      max_shortest_paths: profile.maxShortestPaths,
       active_profile_name: profile.name,
     });
     return true;
@@ -420,6 +469,11 @@ export class SettingsManager {
             sortMode: p.sortMode === "links" || p.sortMode === "modified" || p.sortMode === "path" ? p.sortMode : "alpha",
             includedTags: Array.isArray(p.includedTags) ? p.includedTags.filter((v): v is string => typeof v === "string") : [],
             excludedTags: Array.isArray(p.excludedTags) ? p.excludedTags.filter((v): v is string => typeof v === "string") : [],
+            enableTagFilter: typeof p.enableTagFilter === "boolean" ? p.enableTagFilter : false,
+            enableSmartSort: typeof p.enableSmartSort === "boolean" ? p.enableSmartSort : false,
+            mapScope: p.mapScope === "local" ? "local" : "full",
+            localDepth: Number.isFinite(p.localDepth) ? Math.max(1, Math.min(50, Math.floor(Number(p.localDepth)))) : DEFAULT_SETTINGS.local_depth,
+            maxShortestPaths: Number.isFinite(p.maxShortestPaths) ? Math.max(1, Math.min(5000, Math.floor(Number(p.maxShortestPaths)))) : DEFAULT_SETTINGS.max_shortest_paths,
           } as MOCProfile))
       : [];
     settings.active_profile_name = typeof settings.active_profile_name === "string" ? settings.active_profile_name : "";

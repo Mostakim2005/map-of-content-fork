@@ -80,7 +80,7 @@ export default class MOCPlugin extends Plugin {
   }
 
   private scheduleAutoUpdate(delay = 250): void {
-    if (!this.settings.get("auto_update_on_file_change") && !this.settings.isCurrentNoteCentral()) return;
+    if (!this.settings.get("auto_update_on_file_change") && !this.settings.isCurrentNoteCentral() && !this.settings.isTemporaryLocalExploration()) return;
     if (this.autoUpdateTimer !== null) clearTimeout(this.autoUpdateTimer);
     this.autoUpdateTimer = setTimeout(() => {
       this.autoUpdateTimer = null;
@@ -198,6 +198,24 @@ export default class MOCPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "why-is-current-note-not-in-moc",
+      name: "Why is the current note not in the Map of Content?",
+      callback: () => this.showWhyCurrentNoteNotConnected(),
+    });
+
+    this.addCommand({
+      id: "explore-current-note-locally",
+      name: "Explore current note locally (temporary)",
+      callback: () => void this.startTemporaryLocalExploration(),
+    });
+
+    this.addCommand({
+      id: "exit-temporary-local-exploration",
+      name: "Exit temporary local exploration",
+      callback: () => this.stopTemporaryLocalExploration(),
+    });
+
+    this.addCommand({
       id: "add-current-note-to-central-node-favorites",
       name: "Add current note to Central Node favorites",
       callback: () => void this.addActiveFileToCentralNodePresets(),
@@ -270,6 +288,18 @@ export default class MOCPlugin extends Plugin {
         );
       }
     }
+    menu.addSeparator();
+    menu.addItem((item) => item
+      .setTitle("Explore current note locally (temporary)")
+      .setIcon("focus")
+      .onClick(() => void this.startTemporaryLocalExploration()));
+    if (this.settings.isTemporaryLocalExploration()) {
+      menu.addItem((item) => item
+        .setTitle("Exit temporary local exploration")
+        .setIcon("x")
+        .onClick(() => this.stopTemporaryLocalExploration()));
+    }
+
     if (this.settings.get("moc_profiles").length) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Choose MOC profile...").setIcon("layers").onClick(() => new ProfileModal(this, "choose").open()));
@@ -297,6 +327,46 @@ export default class MOCPlugin extends Plugin {
       return;
     }
     new WhyNoteModal(this, file.path).open();
+  }
+
+  showWhyCurrentNoteNotConnected(): void {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || file.extension !== "md") {
+      new Notice("Open a Markdown note first.");
+      return;
+    }
+    const explanation = this.db.getConnectionExplanation(file.path);
+    if (explanation.connected) {
+      new Notice("This note is already connected to the current Central Node.");
+      return;
+    }
+    const modal = new Modal(this.app);
+    modal.contentEl.empty();
+    modal.contentEl.createEl("h2", { text: "Why isn't this note connected?" });
+    modal.contentEl.createEl("p", { text: explanation.reason });
+    if (explanation.suggestedPath?.length) {
+      modal.contentEl.createEl("h3", { text: "Possible connection" });
+      modal.contentEl.createEl("p", { text: explanation.suggestedPath.join(" → ") });
+    }
+    new Setting(modal.contentEl).addButton((button) => button.setButtonText("Close").setCta().onClick(() => modal.close()));
+    modal.open();
+  }
+
+  async startTemporaryLocalExploration(): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!file || file.extension !== "md" || this.settings.isExcludedFile(file)) {
+      new Notice("Open a non-excluded Markdown note first.");
+      return;
+    }
+    if (await this.settings.startTemporaryLocalExploration(file.path, this.settings.get("local_depth"))) {
+      new Notice(`Temporary local exploration: ${file.path}`);
+    }
+  }
+
+  stopTemporaryLocalExploration(): void {
+    if (!this.settings.isTemporaryLocalExploration()) return;
+    this.settings.stopTemporaryLocalExploration();
+    new Notice("Returned to the saved Map of Content view.");
   }
 
   async useAutomaticCentralNote(): Promise<void> {

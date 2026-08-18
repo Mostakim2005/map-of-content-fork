@@ -19,6 +19,7 @@ import type {
 import { getFileNameFromPath, devLog } from "./utils";
 import type MOCPlugin from "./main";
 import type { SettingsManager } from "./settings";
+import { buildShortestPathGraph, enumerateShortestPaths } from "./core/logic";
 
 const nextFrame = async (): Promise<void> => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -46,6 +47,8 @@ export class DBManager {
   isDatabaseComplete = false;
   isDatabaseUpdating = false;
   lastPathSearchTruncated = false;
+  lastPathCount = 0;
+  lastUpdateMs = 0;
 
   private updatePromise: Promise<void> | null = null;
   private updateQueued = false;
@@ -118,8 +121,10 @@ export class DBManager {
       this.updateDiagnostics();
 
       this.isDatabaseComplete = true;
+      this.lastUpdateMs = Date.now() - startTime;
+      this.updateDiagnostics();
       if (!silent) new Notice("Map of Content updated");
-      devLog(`Update complete, took ${(Date.now() - startTime) / 1000} seconds`);
+      devLog(`Update complete, took ${this.lastUpdateMs / 1000} seconds`);
     } catch (error) {
       console.error("[Map of Content] Failed to update Map of Content", error);
       if (!silent) {
@@ -141,6 +146,15 @@ export class DBManager {
       unreachableFiles: this.dbKeys.length,
       orphanFiles: 0,
       brokenLinks: 0,
+      linkCount: 0,
+      cachedNotes: this.linkCache.size,
+      lastUpdateMs: this.lastUpdateMs,
+      lastPathCount: this.lastPathCount,
+      lastPathSearchTruncated: this.lastPathSearchTruncated,
+      centralNotePath: undefined,
+      mapScope: this.settings.getEffectiveMapScope(),
+      localDepth: this.settings.getEffectiveMapScope() === "local" ? this.settings.getEffectiveLocalDepth() : undefined,
+      traversalMode: this.settings.get("link_traversal_mode"),
     };
     this.isDatabaseComplete = false;
   }
@@ -156,57 +170,24 @@ export class DBManager {
   findPathsDetailed(path: string): PathSearchResult {
     this.lastPathSearchTruncated = false;
     if (!this.centralNotePath || !this.db[path]) return { paths: [], truncated: false };
-    if (path === this.centralNotePath) {
-      return { paths: [{ allMembers: [path], items: [[path, LINKED_CN]] }], truncated: false };
-    }
 
-    const parents = this.shortestPathParents.get(path);
-    if (!parents || parents.size === 0) return { paths: [], truncated: false };
+    const result = enumerateShortestPaths(
+      this.centralNotePath,
+      path,
+      this.shortestPathParents,
+      this.settings.get("max_shortest_paths"),
+    );
+    this.lastPathSearchTruncated = result.truncated;
+    this.lastPathCount = result.paths.length;
 
-    const maxPaths = this.settings.get("max_shortest_paths");
-    const paths: string[][] = [];
-    const currentPath = [path];
-    const stack: Array<{ node: string; parents: string[]; index: number }> = [
-      { node: path, parents: [...parents], index: 0 },
-    ];
-
-    while (stack.length > 0) {
-      if (paths.length >= maxPaths) {
-        this.lastPathSearchTruncated = true;
-        break;
-      }
-
-      const frame = stack[stack.length - 1];
-      if (frame.node === this.centralNotePath) {
-        paths.push([...currentPath].reverse());
-        stack.pop();
-        currentPath.pop();
-        continue;
-      }
-
-      if (frame.index >= frame.parents.length) {
-        stack.pop();
-        currentPath.pop();
-        continue;
-      }
-
-      const parent = frame.parents[frame.index++];
-      currentPath.push(parent);
-      stack.push({
-        node: parent,
-        parents: [...(this.shortestPathParents.get(parent) ?? [])],
-        index: 0,
-      });
-    }
-
-    const result = paths.map((members) => ({
+    const paths = result.paths.map((members) => ({
       allMembers: members,
       items: members.map((member, index) => {
         if (index === 0) return [member, LINKED_CN] as [string, LinkDirection];
         return [member, this.getLinkDirection(members[index - 1], member)] as [string, LinkDirection];
       }),
     }));
-    return { paths: result, truncated: this.lastPathSearchTruncated };
+    return { paths, truncated: result.truncated };
   }
 
   getLinkDirection(fromPath: string, toPath: string): LinkDirection {
@@ -317,43 +298,21 @@ export class DBManager {
     if (!centralNote) return;
 
     const mode = this.settings.get("link_traversal_mode");
-    const queue: string[] = [centralNotePath];
-    centralNote.distanceFromCn = 1;
-    this.shortestPathParents = new Map([[centralNotePath, new Set<string>()]]);
-    this.descendants = new Map();
+    const localDepth = this.settings.getEffectiveMapScope() === "local" ? this.settings.getEffectiveLocalDepth() : Number.POSITIVE_INFINITY;
+    const graph = buildShortestPathGraph(
+      centralNotePath,
+      (path) => {
+        const note = this.getNoteFromPath(path);
+        return note ? this.getTraversalNeighbours(note, mode) : [];
+      },
+      localDepth,
+    );
 
-    let index = 0;
-    while (index < queue.length) {
-      const currentPath = queue[index++];
-      const current = this.getNoteFromPath(currentPath);
-      if (!current || current.distanceFromCn == null) continue;
-
-      const nextDistance = current.distanceFromCn + 1;
-      const neighbours = this.getTraversalNeighbours(current, mode);
-
-      for (const link of neighbours) {
-        const note = this.getNoteFromPath(link);
-        if (!note) continue;
-
-        if (note.distanceFromCn == null) {
-          note.distanceFromCn = nextDistance;
-          this.shortestPathParents.set(link, new Set([currentPath]));
-          queue.push(link);
-        } else if (note.distanceFromCn === nextDistance) {
-          this.shortestPathParents.get(link)?.add(currentPath);
-        } else {
-          continue;
-        }
-
-        if (this.settings.get("map_scope") === "local" && nextDistance > this.settings.get("local_depth") + 1) continue;
-
-        let children = this.descendants.get(currentPath);
-        if (!children) {
-          children = new Set<string>();
-          this.descendants.set(currentPath, children);
-        }
-        children.add(link);
-      }
+    this.shortestPathParents = graph.parents;
+    this.descendants = graph.children;
+    for (const [path, distance] of graph.distances) {
+      const note = this.getNoteFromPath(path);
+      if (note) note.distanceFromCn = distance + 1;
     }
   }
 
@@ -443,6 +402,59 @@ export class DBManager {
     return { ...this.diagnostics };
   }
 
+  getConnectionExplanation(path: string): {
+    connected: boolean;
+    reason: string;
+    suggestedPath?: string[];
+  } {
+    if (!this.db[path]) {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (file instanceof TFile && this.settings.isExcludedFile(file)) {
+        return { connected: false, reason: "This note is excluded by the current Map of Content filters." };
+      }
+      return { connected: false, reason: "This note is not included in the current Map of Content graph." };
+    }
+    if (!this.centralNotePath) return { connected: false, reason: "No valid Central Node is currently selected." };
+    if (this.db[path].distanceFromCn !== null) return { connected: true, reason: "This note is already connected to the current Central Node." };
+
+    if (this.settings.getEffectiveMapScope() === "local") {
+      const full = this.findConnectionIgnoringLocalDepth(path);
+      if (full.length > 0) {
+        return { connected: false, reason: `A connection exists, but it is outside the temporary/local depth of ${this.settings.getEffectiveLocalDepth()}.`, suggestedPath: full };
+      }
+    }
+
+    const full = this.findConnectionIgnoringLocalDepth(path);
+    if (full.length > 0) return { connected: false, reason: "No path is currently included under the selected traversal/filter settings. A path exists outside at least one active graph constraint.", suggestedPath: full };
+    return { connected: false, reason: "No link path exists from the current Central Node under the selected traversal direction." };
+  }
+
+  private findConnectionIgnoringLocalDepth(target: string): string[] {
+    if (!this.centralNotePath || !this.db[target]) return [];
+    const queue = [this.centralNotePath];
+    const parents = new Map<string, string | undefined>([[this.centralNotePath, undefined]]);
+    let index = 0;
+    while (index < queue.length && queue.length < 20000) {
+      const current = queue[index++];
+      if (current === target) break;
+      const note = this.db[current];
+      if (!note) continue;
+      for (const next of this.getTraversalNeighbours(note, this.settings.get("link_traversal_mode"))) {
+        if (parents.has(next) || !this.db[next]) continue;
+        parents.set(next, current);
+        queue.push(next);
+      }
+    }
+    if (!parents.has(target)) return [];
+    const result: string[] = [];
+    let current: string | undefined = target;
+    while (current) {
+      result.push(current);
+      current = parents.get(current);
+    }
+    return result.reverse();
+  }
+
   private updateDiagnostics(): void {
     const total = this.dbKeys.length;
     const reachable = this.allNotes().filter((note) => note.distanceFromCn !== null).length;
@@ -460,12 +472,23 @@ export class DBManager {
     let brokenLinks = 0;
     for (const count of this.brokenLinksByNote.values()) brokenLinks += count;
 
+    let linkCount = 0;
+    for (const note of this.allNotes()) linkCount += note.linksTo.size;
     this.diagnostics = {
       totalIncludedFiles: total,
       reachableFiles: reachable,
       unreachableFiles: Math.max(0, total - reachable),
       orphanFiles,
       brokenLinks,
+      linkCount,
+      cachedNotes: this.linkCache.size,
+      lastUpdateMs: this.lastUpdateMs,
+      lastPathCount: this.lastPathCount,
+      lastPathSearchTruncated: this.lastPathSearchTruncated,
+      centralNotePath: this.centralNotePath,
+      mapScope: this.settings.getEffectiveMapScope(),
+      localDepth: this.settings.getEffectiveMapScope() === "local" ? this.settings.getEffectiveLocalDepth() : undefined,
+      traversalMode: this.settings.get("link_traversal_mode"),
     };
   }
 
