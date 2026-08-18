@@ -5,7 +5,7 @@
   export let app: App;
   export let plugin: MOCPlugin;
 
-  let excludedPhrases = [...plugin.settings.get("exluded_filename_components")];
+  let excludedPhrases = [...plugin.mocSettings.get("exluded_filename_components")];
   let input = "";
   let showAllHidden = false;
 
@@ -20,7 +20,7 @@
     if (!value || excludedPhrases.includes(value)) return;
     excludedPhrases = [...excludedPhrases, value];
     input = "";
-    await plugin.settings.set({ exluded_filename_components: excludedPhrases });
+    await plugin.mocSettings.set({ exluded_filename_components: excludedPhrases });
   }
 
   async function deleteSelected(event: Event) {
@@ -28,7 +28,7 @@
     const selected = Array.from(select.selectedOptions).map((option) => option.value);
     if (!selected.length) return;
     excludedPhrases = excludedPhrases.filter((phrase) => !selected.includes(phrase));
-    await plugin.settings.set({ exluded_filename_components: excludedPhrases });
+    await plugin.mocSettings.set({ exluded_filename_components: excludedPhrases });
   }
 </script>
 

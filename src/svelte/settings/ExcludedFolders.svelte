@@ -6,7 +6,7 @@
   export let app: App;
   export let plugin: MOCPlugin;
 
-  let excludedFolders = [...plugin.settings.get("exluded_folders")];
+  let excludedFolders = [...plugin.mocSettings.get("exluded_folders")];
   let input = "";
   let showAllHidden = false;
   const allFolders = GetAllFolders(app);
@@ -21,7 +21,7 @@
     if (!allFolders.includes(value)) return;
     if (!excludedFolders.includes(value)) {
       excludedFolders = [...excludedFolders, value];
-      await plugin.settings.set({ exluded_folders: excludedFolders });
+      await plugin.mocSettings.set({ exluded_folders: excludedFolders });
     }
     input = "";
   }
@@ -31,7 +31,7 @@
     const selected = Array.from(select.selectedOptions).map((option) => option.value);
     if (!selected.length) return;
     excludedFolders = excludedFolders.filter((folder) => !selected.includes(folder));
-    await plugin.settings.set({ exluded_folders: excludedFolders });
+    await plugin.mocSettings.set({ exluded_folders: excludedFolders });
   }
 </script>
 
