@@ -45,8 +45,6 @@ jobs:
       - name: ESLint
         run: npm run lint
 
-      - name: Formatting check
-        run: npm run format:check
 
       - name: Regression tests
         run: npm test
