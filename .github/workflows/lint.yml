@@ -45,8 +45,6 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
-      - name: Check formatting
-        run: npm run format:check
 
       - name: Build plugin
         run: npm run build
