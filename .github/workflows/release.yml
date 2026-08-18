@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type and Svelte checks
+        run: npm run check
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Regression tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "Tag version: $TAG"
+
+          node - "$TAG" <<'NODE'
+          const fs = require("fs");
+
+          const tagVersion = process.argv[2];
+          const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+
+          if (manifest.version !== tagVersion) {
+            throw new Error(
+              `Version mismatch: manifest.json=${manifest.version}, tag=${tagVersion}`
+            );
+          }
+
+          if (fs.existsSync("versions.json")) {
+            const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+
+            if (!Object.prototype.hasOwnProperty.call(versions, tagVersion)) {
+              throw new Error(`versions.json does not contain ${tagVersion}`);
+            }
+          }
+
+          console.log(`Release version validated: ${tagVersion}`);
+          NODE
+
+      - name: Validate release files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f main.js
+          test -f manifest.json
+
+          if [ -f styles.css ]; then
+            echo "styles.css found"
+          else
+            echo "No styles.css file; continuing"
+          fi
+
+          ls -lh main.js manifest.json styles.css 2>/dev/null || true
+
+      - name: Create release package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p release
+          cp main.js release/
+          cp manifest.json release/
+
+          if [ -f styles.css ]; then
+            cp styles.css release/
+          fi
+
+          cd release
+          zip -r "../map-of-content-${GITHUB_REF_NAME}.zip" .
+
+      - name: Generate build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: "map-of-content-${{ github.ref_name }}.zip"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-of-content-${{ github.ref_name }}
+          path: |
+            map-of-content-${{ github.ref_name }}.zip
+            main.js
+            manifest.json
+            styles.css
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}"             "main.js"             "manifest.json"             --draft             --title "Map of Content ${GITHUB_REF_NAME#v}"             --generate-notes
+
+          if [ -f styles.css ]; then
+            gh release upload "${GITHUB_REF_NAME}" styles.css
+          fi
