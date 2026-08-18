@@ -22,22 +22,22 @@ export default class CentralNoteModal extends FuzzySuggestModal<CentralNoteChoic
     if (
       activeFile &&
       activeFile.extension === "md" &&
-      !this.plugin.settings.isExcludedFile(activeFile)
+      !this.plugin.mocSettings.isExcludedFile(activeFile)
     ) {
       items.push({ type: "current" });
     }
 
     const seen = new Set<string>();
-    for (const path of this.plugin.settings.get("central_note_presets")) {
+    for (const path of this.plugin.mocSettings.get("central_note_presets")) {
       if (seen.has(path)) continue;
-      if (this.plugin.settings.isValidCentralNotePath(path)) {
+      if (this.plugin.mocSettings.isValidCentralNotePath(path)) {
         items.push({ type: "note", path });
         seen.add(path);
       }
     }
 
     for (const file of this.plugin.app.vault.getMarkdownFiles()) {
-      if (this.plugin.settings.isExcludedFile(file) || seen.has(file.path)) {
+      if (this.plugin.mocSettings.isExcludedFile(file) || seen.has(file.path)) {
         continue;
       }
       items.push({ type: "note", path: file.path });
@@ -53,7 +53,7 @@ export default class CentralNoteModal extends FuzzySuggestModal<CentralNoteChoic
       return activeFile ? `Use current note: ${activeFile.path}` : "Use current note";
     }
 
-    const isFavorite = this.plugin.settings
+    const isFavorite = this.plugin.mocSettings
       .get("central_note_presets")
       .includes(item.path);
     return `${isFavorite ? "★ " : ""}${getFileNameFromPath(item.path)} — ${item.path}`;

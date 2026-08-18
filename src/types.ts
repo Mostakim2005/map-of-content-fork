@@ -1,4 +1,4 @@
-import { LINKED_BOTH, LINKED_CN, LINKED_FROM, LINKED_TO } from "./constants";
+import type { LINKED_BOTH, LINKED_CN, LINKED_FROM, LINKED_TO } from "./constants";
 
 export type LinkDirection =
   | typeof LINKED_TO

@@ -43,13 +43,6 @@ export class DBManager {
     unreachableFiles: 0,
     orphanFiles: 0,
     brokenLinks: 0,
-    linkCount: 0,
-    cachedNotes: 0,
-    lastUpdateMs: 0,
-    lastPathCount: 0,
-    lastPathSearchTruncated: false,
-    mapScope: "full",
-    traversalMode: "both",
   };
   isDatabaseComplete = false;
   isDatabaseUpdating = false;
@@ -71,7 +64,7 @@ export class DBManager {
   constructor(plugin: MOCPlugin) {
     this.app = plugin.app;
     this.plugin = plugin;
-    this.settings = plugin.settings;
+    this.settings = plugin.mocSettings;
     this.vault = this.app.vault;
     this.dbEntries = Object.entries(this.db);
   }
@@ -334,9 +327,17 @@ export class DBManager {
     const cache = this.app.metadataCache.getFileCache(file);
     const tags = new Set<string>();
     for (const tag of cache?.tags ?? []) tags.add(tag.tag.replace(/^#/, "").toLowerCase());
-    const frontmatterTags = cache?.frontmatter?.tags;
-    if (Array.isArray(frontmatterTags)) for (const tag of frontmatterTags) if (typeof tag === "string") tags.add(tag.replace(/^#/, "").toLowerCase());
-    else if (typeof frontmatterTags === "string") for (const tag of frontmatterTags.split(",")) tags.add(tag.trim().replace(/^#/, "").toLowerCase());
+    const frontmatterTags: unknown = cache?.frontmatter?.tags;
+    if (Array.isArray(frontmatterTags)) {
+      for (const tag of frontmatterTags) {
+        if (typeof tag === "string") tags.add(tag.replace(/^#/, "").toLowerCase());
+      }
+    } else if (typeof frontmatterTags === "string") {
+      for (const tag of frontmatterTags.split(",")) {
+        const normalized = tag.trim().replace(/^#/, "").toLowerCase();
+        if (normalized) tags.add(normalized);
+      }
+    }
     const included = this.settings.get("included_tags").map((tag) => tag.toLowerCase());
     const excluded = this.settings.get("excluded_tags").map((tag) => tag.toLowerCase());
     if (excluded.some((tag) => tags.has(tag))) return false;

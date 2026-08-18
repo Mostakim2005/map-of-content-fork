@@ -12,12 +12,12 @@ import ProfileModal from "./profile-modal";
 export default class MOCPlugin extends Plugin {
   db: DBManager;
   view?: MOCView;
-  settings: SettingsManager;
+  mocSettings: SettingsManager;
   private autoUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 
   async onload(): Promise<void> {
-    this.settings = new SettingsManager(this);
-    await this.settings.loadSettings();
+    this.mocSettings = new SettingsManager(this);
+    await this.mocSettings.loadSettings();
     this.db = new DBManager(this);
     this.register(() => this.clearAutoUpdateTimer());
 
@@ -28,7 +28,7 @@ export default class MOCPlugin extends Plugin {
 
     this.registerEvent(
       this.app.workspace.on("file-open", (file) => {
-        if (this.settings.isCurrentNoteCentral() && file) {
+        if (this.mocSettings.isCurrentNoteCentral() && file) {
           this.scheduleAutoUpdate();
         }
       })
@@ -38,7 +38,7 @@ export default class MOCPlugin extends Plugin {
       this.app.vault.on("rename", (file, oldPath) => {
         void (async () => {
           this.db.invalidateLinkCache();
-          await this.settings.handleFileRename(oldPath, file.path);
+          await this.mocSettings.handleFileRename(oldPath, file.path);
           this.scheduleAutoUpdate();
         })();
       })
@@ -48,7 +48,7 @@ export default class MOCPlugin extends Plugin {
       this.app.vault.on("delete", (file) => {
         void (async () => {
           this.db.invalidateLinkCache();
-          await this.settings.handleFileDelete(file.path);
+          await this.mocSettings.handleFileDelete(file.path);
           this.scheduleAutoUpdate();
         })();
       })
@@ -57,7 +57,7 @@ export default class MOCPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on("create", () => {
         this.db.invalidateLinkCache();
-        if (this.settings.get("auto_update_on_file_change")) this.scheduleAutoUpdate();
+        if (this.mocSettings.get("auto_update_on_file_change")) this.scheduleAutoUpdate();
       })
     );
 
@@ -69,7 +69,7 @@ export default class MOCPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file.extension === "md" && this.settings.get("auto_update_on_file_change")) {
+        if (file instanceof TFile && file.extension === "md" && this.mocSettings.get("auto_update_on_file_change")) {
           this.db.invalidateLinkCache(file.path);
           this.scheduleAutoUpdate();
         }
@@ -80,7 +80,7 @@ export default class MOCPlugin extends Plugin {
   }
 
   private scheduleAutoUpdate(delay = 250): void {
-    if (!this.settings.get("auto_update_on_file_change") && !this.settings.isCurrentNoteCentral() && !this.settings.isTemporaryLocalExploration()) return;
+    if (!this.mocSettings.get("auto_update_on_file_change") && !this.mocSettings.isCurrentNoteCentral() && !this.mocSettings.isTemporaryLocalExploration()) return;
     if (this.autoUpdateTimer !== null) clearTimeout(this.autoUpdateTimer);
     this.autoUpdateTimer = setTimeout(() => {
       this.autoUpdateTimer = null;
@@ -226,7 +226,7 @@ export default class MOCPlugin extends Plugin {
         if (
           !(file instanceof TFile) ||
           file.extension !== "md" ||
-          this.settings.isExcludedFile(file)
+          this.mocSettings.isExcludedFile(file)
         ) {
           return;
         }
@@ -274,8 +274,8 @@ export default class MOCPlugin extends Plugin {
         .setIcon("target")
         .onClick(() => void this.useFixedCentralNote())
     );
-    const favorites = this.settings.get("central_note_presets").filter((path) =>
-      this.settings.isValidCentralNotePath(path)
+    const favorites = this.mocSettings.get("central_note_presets").filter((path) =>
+      this.mocSettings.isValidCentralNotePath(path)
     );
     if (favorites.length) {
       menu.addSeparator();
@@ -283,7 +283,7 @@ export default class MOCPlugin extends Plugin {
         menu.addItem((item) =>
           item
             .setTitle(path)
-            .setIcon(path === this.settings.getCentralNotePath() ? "check" : "star")
+            .setIcon(path === this.mocSettings.getCentralNotePath() ? "check" : "star")
             .onClick(() => void this.setFixedCentralNote(path, false))
         );
       }
@@ -293,26 +293,20 @@ export default class MOCPlugin extends Plugin {
       .setTitle("Explore current note locally (temporary)")
       .setIcon("focus")
       .onClick(() => void this.startTemporaryLocalExploration()));
-    if (this.settings.isTemporaryLocalExploration()) {
+    if (this.mocSettings.isTemporaryLocalExploration()) {
       menu.addItem((item) => item
         .setTitle("Exit temporary local exploration")
         .setIcon("x")
         .onClick(() => this.stopTemporaryLocalExploration()));
     }
 
-    if (this.settings.get("moc_profiles").length) {
+    if (this.mocSettings.get("moc_profiles").length) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Choose MOC profile...").setIcon("layers").onClick(() => new ProfileModal(this, "choose").open()));
     }
     menu.addItem((item) => item.setTitle("Save current MOC profile").setIcon("save").onClick(() => new ProfileModal(this, "save").open()));
     menu.addItem((item) => item.setTitle("Generate MOC note").setIcon("file-plus").onClick(() => void this.generateMOCNote()));
     menu.addSeparator();
-    menu.addItem((item) =>
-      item
-        .setTitle("Central Node settings")
-        .setIcon("settings")
-        .onClick(() => this.app.commands.executeCommandById("app:open-settings"))
-    );
     menu.showAtMouseEvent(event);
   }
 
@@ -322,7 +316,7 @@ export default class MOCPlugin extends Plugin {
 
   showWhyCurrentNote(): void {
     const file = this.app.workspace.getActiveFile();
-    if (!file || file.extension !== "md" || this.settings.isExcludedFile(file)) {
+    if (!file || file.extension !== "md" || this.mocSettings.isExcludedFile(file)) {
       new Notice("Open a non-excluded Markdown note first.");
       return;
     }
@@ -354,40 +348,40 @@ export default class MOCPlugin extends Plugin {
 
   async startTemporaryLocalExploration(): Promise<void> {
     const file = this.app.workspace.getActiveFile();
-    if (!file || file.extension !== "md" || this.settings.isExcludedFile(file)) {
+    if (!file || file.extension !== "md" || this.mocSettings.isExcludedFile(file)) {
       new Notice("Open a non-excluded Markdown note first.");
       return;
     }
-    if (await this.settings.startTemporaryLocalExploration(file.path, this.settings.get("local_depth"))) {
+    if (await this.mocSettings.startTemporaryLocalExploration(file.path, this.mocSettings.get("local_depth"))) {
       new Notice(`Temporary local exploration: ${file.path}`);
     }
   }
 
   stopTemporaryLocalExploration(): void {
-    if (!this.settings.isTemporaryLocalExploration()) return;
-    this.settings.stopTemporaryLocalExploration();
+    if (!this.mocSettings.isTemporaryLocalExploration()) return;
+    this.mocSettings.stopTemporaryLocalExploration();
     new Notice("Returned to the saved Map of Content view.");
   }
 
   async useAutomaticCentralNote(): Promise<void> {
-    await this.settings.set({ central_note_mode: "automatic" });
+    await this.mocSettings.set({ central_note_mode: "automatic" });
     new Notice("Automatic Central Node mode enabled.");
   }
 
   async toggleSetting(key: "enable_tag_filter" | "enable_smart_sort"): Promise<void> {
     if (key === "enable_tag_filter") {
-      const next = !this.settings.get("enable_tag_filter");
-      await this.settings.set({ enable_tag_filter: next });
+      const next = !this.mocSettings.get("enable_tag_filter");
+      await this.mocSettings.set({ enable_tag_filter: next });
       new Notice(`Tag filtering ${next ? "enabled" : "disabled"}.`);
       return;
     }
-    const next = !this.settings.get("enable_smart_sort");
-    await this.settings.set({ enable_smart_sort: next });
+    const next = !this.mocSettings.get("enable_smart_sort");
+    await this.mocSettings.set({ enable_smart_sort: next });
     new Notice(`Smart sorting ${next ? "enabled" : "disabled"}.`);
   }
 
   async generateMOCNote(): Promise<void> {
-    const central = this.settings.getCentralNotePath();
+    const central = this.mocSettings.getCentralNotePath();
     if (!central || !this.db.getNoteFromPath(central)) {
       new Notice("Choose a valid Central Node first.");
       return;
@@ -445,7 +439,7 @@ export default class MOCPlugin extends Plugin {
   }
 
   async setFixedCentralNote(path: string, addToPresets = true): Promise<void> {
-    if (!(await this.settings.setFixedCentralNote(path, addToPresets))) {
+    if (!(await this.mocSettings.setFixedCentralNote(path, addToPresets))) {
       new Notice("That note cannot be used as a Central Node.");
       return;
     }
@@ -453,7 +447,7 @@ export default class MOCPlugin extends Plugin {
   }
 
   async useCurrentNoteAsCentralNote(): Promise<void> {
-    if (!(await this.settings.useCurrentNoteAsCentralNote())) {
+    if (!(await this.mocSettings.useCurrentNoteAsCentralNote())) {
       new Notice("Open a non-excluded Markdown note first.");
       return;
     }
@@ -461,7 +455,7 @@ export default class MOCPlugin extends Plugin {
   }
 
   async useFixedCentralNote(): Promise<void> {
-    if (!(await this.settings.useFixedCentralNote())) {
+    if (!(await this.mocSettings.useFixedCentralNote())) {
       new Notice("Your fixed Central Node is not a valid Markdown note.");
       this.chooseCentralNote();
       return;
@@ -483,7 +477,7 @@ export default class MOCPlugin extends Plugin {
     if (
       !activeFile ||
       activeFile.extension !== "md" ||
-      this.settings.isExcludedFile(activeFile)
+      this.mocSettings.isExcludedFile(activeFile)
     ) {
       new Notice("Open a non-excluded Markdown note first.");
       return;
@@ -492,7 +486,7 @@ export default class MOCPlugin extends Plugin {
   }
 
   async addCentralNodePreset(path: string): Promise<void> {
-    if (!(await this.settings.addCentralNotePreset(path))) {
+    if (!(await this.mocSettings.addCentralNotePreset(path))) {
       new Notice("That note cannot be added as a Central Node favorite.");
       return;
     }

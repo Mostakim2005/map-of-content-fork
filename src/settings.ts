@@ -1,7 +1,6 @@
 import { PluginSettingTab, TFile } from "obsidian";
 import type MOCPlugin from "./main";
 import Settings from "./svelte/Settings.svelte";
-import { devLog } from "./utils";
 import type { CentralNoteMode, FileItem, LinkTraversalMode, MOCProfile, SortMode } from "./types";
 import { chooseAutomaticCentralNode } from "./core/logic";
 
@@ -456,8 +455,9 @@ export class SettingsManager {
     settings.excluded_tags = Array.isArray(settings.excluded_tags) ? Array.from(new Set(settings.excluded_tags.filter((v): v is string => typeof v === "string" && v.trim().length > 0).map((v) => v.trim().replace(/^#/, "")))) : [];
     settings.enable_tag_filter = typeof settings.enable_tag_filter === "boolean" ? settings.enable_tag_filter : false;
     settings.enable_smart_sort = typeof settings.enable_smart_sort === "boolean" ? settings.enable_smart_sort : false;
-    settings.moc_profiles = Array.isArray(settings.moc_profiles)
-      ? settings.moc_profiles
+    const rawProfiles: unknown = settings.moc_profiles;
+    settings.moc_profiles = Array.isArray(rawProfiles)
+      ? rawProfiles
           .filter((p): p is Record<string, unknown> => Boolean(p && typeof p === "object"))
           .filter((p) => typeof p.name === "string" && typeof p.centralNotePath === "string")
           .map((p) => ({

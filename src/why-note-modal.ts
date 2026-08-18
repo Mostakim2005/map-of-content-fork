@@ -1,7 +1,6 @@
 import { Modal } from "obsidian";
 import type MOCPlugin from "./main";
 import { getDisplayName, NavigateToFile } from "./utils";
-import type { PathItem } from "./types";
 
 export default class WhyNoteModal extends Modal {
   private plugin: MOCPlugin;
@@ -33,7 +32,7 @@ export default class WhyNoteModal extends Modal {
     });
 
     const list = contentEl.createEl("ol");
-    const startsAtCN = this.plugin.settings.get("MOC_path_starts_at_CN");
+    const startsAtCN = this.plugin.mocSettings.get("MOC_path_starts_at_CN");
     for (const path of paths.slice(0, 100)) {
       const item = list.createEl("li");
       const members = startsAtCN ? path.allMembers : [...path.allMembers].reverse();
@@ -52,7 +51,7 @@ export default class WhyNoteModal extends Modal {
     if (result.truncated || paths.length > 100) {
       contentEl.createEl("p", {
         text: result.truncated
-          ? `Showing the first 100 of at most ${this.plugin.settings.get("max_shortest_paths")} shortest paths.`
+          ? `Showing the first 100 of at most ${this.plugin.mocSettings.get("max_shortest_paths")} shortest paths.`
           : "Showing the first 100 shortest paths.",
       });
     }

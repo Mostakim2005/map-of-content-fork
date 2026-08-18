@@ -1,5 +1,5 @@
 import type { DBManager } from "./db";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 
 export const devLog = (message: string) => {
   const printDevLog = false;
