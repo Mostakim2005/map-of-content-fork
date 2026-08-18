@@ -69,7 +69,7 @@ export default class MOCPlugin extends Plugin {
 
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
-        if (file.extension === "md" && this.mocSettings.get("auto_update_on_file_change")) {
+        if (file instanceof TFile && file.extension === "md" && this.mocSettings.get("auto_update_on_file_change")) {
           this.db.invalidateLinkCache(file.path);
           this.scheduleAutoUpdate();
         }
@@ -309,9 +309,9 @@ export default class MOCPlugin extends Plugin {
     menu.addSeparator();
     menu.addItem((item) =>
       item
-        .setTitle("Central Node settings")
-        .setIcon("settings")
-        .onClick(() => this.app.commands.executeCommandById("app:open-settings"))
+        .setTitle("Choose Central Node…")
+        .setIcon("target")
+        .onClick(() => new CentralNoteModal(this).open())
     );
     menu.showAtMouseEvent(event);
   }

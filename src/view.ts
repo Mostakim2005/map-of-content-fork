@@ -14,7 +14,6 @@ export default class MOCView extends ItemView {
   _app?: View;
   plugin: MOCPlugin;
   settings: SettingsManager;
-  leaf: WorkspaceLeaf;
   openFilePath = "";
   isPinned = false;
   noteBeingMonitored = "";
@@ -24,7 +23,6 @@ export default class MOCView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: MOCPlugin) {
     super(leaf);
     this.plugin = plugin;
-    this.leaf = leaf;
     this.db = plugin.db;
     this.settings = plugin.mocSettings;
     this.plugin.registerViewInstance(this);
