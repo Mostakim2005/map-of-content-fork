@@ -1,4 +1,4 @@
-## Map Of Content for Obsidian
+## Map Of Contents for Obsidian
 
 With this plugin, you will always know exactly where you are in your vault and how all of your notes are connected to each other. It helps you organize your notes in a decentralized manner, where every note is connected to a central note through different other notes.
 
