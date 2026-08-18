@@ -25,16 +25,28 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 20.x
-          cache: npm
-
+          package-manager-cache: false
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json found; using npm ci"
+            npm ci
+          else
+            echo "package-lock.json not found; bootstrapping with npm install"
+            npm install --no-audit --no-fund
+          fi
 
       - name: Type and Svelte checks
         run: npm run check
 
       - name: ESLint
         run: npm run lint
+
+      - name: Formatting check
+        run: npm run format:check
 
       - name: Regression tests
         run: npm test
@@ -131,3 +143,12 @@ jobs:
           if [ -f styles.css ]; then
             gh release upload "${GITHUB_REF_NAME}" styles.css
           fi
+
+      - name: Upload generated lockfile
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-package-lock-release
+          path: package-lock.json
+          if-no-files-found: ignore
+          retention-days: 7

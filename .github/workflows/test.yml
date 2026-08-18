@@ -20,10 +20,19 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 20.x
-          cache: npm
-
+          package-manager-cache: false
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json found; using npm ci"
+            npm ci
+          else
+            echo "package-lock.json not found; bootstrapping with npm install"
+            npm install --no-audit --no-fund
+          fi
 
       - name: Run regression tests
         run: npm test
@@ -37,5 +46,15 @@ jobs:
             test-results/
             coverage/
             reports/
+            tests/dist/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Upload generated lockfile
+        if: always() && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-package-lock-test
+          path: package-lock.json
+          if-no-files-found: ignore
+          retention-days: 7
