@@ -63,7 +63,7 @@
       {#if indentation === 0}
         <strong title={notePath}>{getDisplayName(notePath, db)}</strong>
       {:else}
-        <a class="link" href="#" title={notePath} on:click|preventDefault={(event) => void NavigateToFile(app, notePath, event)}>
+        <a class="link" href={encodeURI(notePath)} title={notePath} on:click|preventDefault={(event) => void NavigateToFile(app, notePath, event)}>
           {getDisplayName(notePath, db)}
         </a>
       {/if}

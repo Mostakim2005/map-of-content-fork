@@ -15,6 +15,7 @@
 
   const plugin = view.plugin;
   const expandManager = new ExpandManager(plugin.mocSettings.get("auto_expand_depth"));
+  let mainDiv: HTMLDivElement;
   let searchText = "";
   let currentNoteIsPinned = view.isPinned;
 
@@ -134,7 +135,7 @@
                 {#if (pathStartsAtCN && i === path.length - 1) || (!pathStartsAtCN && i === 0)}
                   <span title={pathitem[0]}>{getDisplayName(pathitem[0], plugin.db)}</span>
                 {:else}
-                  <a class="link" href="#" title={pathitem[0]} on:click|preventDefault={(event) => void NavigateToFile(plugin.app, pathitem[0], event)}>{getDisplayName(pathitem[0], plugin.db)}</a>
+                  <a class="link" href={encodeURI(pathitem[0])} title={pathitem[0]} on:click|preventDefault={(event) => void NavigateToFile(plugin.app, pathitem[0], event)}>{getDisplayName(pathitem[0], plugin.db)}</a>
                 {/if}
               {/each}
             </div>
