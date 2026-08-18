@@ -15,7 +15,6 @@
 
   const plugin = view.plugin;
   const expandManager = new ExpandManager(plugin.mocSettings.get("auto_expand_depth"));
-  let mainDiv: HTMLDivElement;
   let searchText = "";
   let currentNoteIsPinned = view.isPinned;
 
