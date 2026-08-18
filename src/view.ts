@@ -11,7 +11,7 @@ import type { SettingsManager } from "./settings";
 
 export default class MOCView extends ItemView {
   db: DBManager;
-  _app: View;
+  _app?: View;
   plugin: MOCPlugin;
   settings: SettingsManager;
   leaf: WorkspaceLeaf;

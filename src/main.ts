@@ -11,7 +11,7 @@ import ProfileModal from "./profile-modal";
 
 export default class MOCPlugin extends Plugin {
   db: DBManager;
-  view: MOCView;
+  view?: MOCView;
   settings: SettingsManager;
   private autoUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 

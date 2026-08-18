@@ -43,6 +43,13 @@ export class DBManager {
     unreachableFiles: 0,
     orphanFiles: 0,
     brokenLinks: 0,
+    linkCount: 0,
+    cachedNotes: 0,
+    lastUpdateMs: 0,
+    lastPathCount: 0,
+    lastPathSearchTruncated: false,
+    mapScope: "full",
+    traversalMode: "both",
   };
   isDatabaseComplete = false;
   isDatabaseUpdating = false;

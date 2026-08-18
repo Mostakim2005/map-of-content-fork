@@ -539,7 +539,7 @@ export class SettingsManager {
 
 export class MOCSettingTab extends PluginSettingTab {
   plugin: MOCPlugin;
-  _app: Settings;
+  _app?: Settings;
 
   constructor(plugin: MOCPlugin) {
     super(plugin.app, plugin);
