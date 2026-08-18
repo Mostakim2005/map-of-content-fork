@@ -1,6 +1,7 @@
 import { Modal } from "obsidian";
 import type MOCPlugin from "./main";
 import { getDisplayName, NavigateToFile } from "./utils";
+import type { PathItem } from "./types";
 
 export default class WhyNoteModal extends Modal {
   private plugin: MOCPlugin;

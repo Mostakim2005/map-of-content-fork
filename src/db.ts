@@ -43,6 +43,13 @@ export class DBManager {
     unreachableFiles: 0,
     orphanFiles: 0,
     brokenLinks: 0,
+    linkCount: 0,
+    cachedNotes: 0,
+    lastUpdateMs: 0,
+    lastPathCount: 0,
+    lastPathSearchTruncated: false,
+    mapScope: "full",
+    traversalMode: "both",
   };
   isDatabaseComplete = false;
   isDatabaseUpdating = false;
@@ -334,8 +341,7 @@ export class DBManager {
       }
     } else if (typeof frontmatterTags === "string") {
       for (const tag of frontmatterTags.split(",")) {
-        const normalized = tag.trim().replace(/^#/, "").toLowerCase();
-        if (normalized) tags.add(normalized);
+        tags.add(tag.trim().replace(/^#/, "").toLowerCase());
       }
     }
     const included = this.settings.get("included_tags").map((tag) => tag.toLowerCase());

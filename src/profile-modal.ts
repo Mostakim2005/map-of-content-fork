@@ -32,7 +32,7 @@ export default class ProfileModal extends Modal {
         })
       );
     } else {
-      const profiles = this.plugin.settings.get("moc_profiles");
+      const profiles = this.plugin.mocSettings.get("moc_profiles");
       if (!profiles.length) {
         contentEl.createEl("p", { text: "No saved profiles yet." });
         return;
@@ -48,14 +48,14 @@ export default class ProfileModal extends Modal {
   }
 
   private async save(): Promise<void> {
-    if (!(await this.plugin.settings.saveCurrentProfile(this.value))) return;
+    if (!(await this.plugin.mocSettings.saveCurrentProfile(this.value))) return;
     this.plugin.rerender();
     this.onSaved?.();
     this.close();
   }
 
   private async apply(name: string): Promise<void> {
-    if (!(await this.plugin.settings.applyProfile(name))) {
+    if (!(await this.plugin.mocSettings.applyProfile(name))) {
       this.close();
       return;
     }
@@ -64,7 +64,7 @@ export default class ProfileModal extends Modal {
   }
 
   private async remove(name: string): Promise<void> {
-    await this.plugin.settings.removeProfile(name);
+    await this.plugin.mocSettings.removeProfile(name);
     this.onOpen();
   }
 }
