@@ -28,7 +28,12 @@ jobs:
           package-manager-cache: false
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm install --include=dev --no-audit --no-fund
+
+      - name: Verify dependencies
+        run: |
+          npm ls svelte-check --depth=0
+          test -x node_modules/.bin/svelte-check
 
       - name: Check TypeScript and Svelte
         run: npm run check
