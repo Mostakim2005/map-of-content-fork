@@ -1,47 +1,61 @@
 import { devLog } from "../../utils";
 
-export class ExpandManager {
-  constructor() {
-    devLog("expandManager created");
-  }
+export type RedrawCallback = (newMaxIndent: number) => void;
 
-  initialMaxIndent = 3;
-  redrawCallbacks = [];
+export class ExpandManager {
+  initialMaxIndent: number;
+  redrawCallbacks: RedrawCallback[] = [];
   isManuallyExpanded = false;
 
-  expand() {
-    if (this.isManuallyExpanded) {
-      this.rerenderDescendants(this.initialMaxIndent);
-      this.isManuallyExpanded = false;
-    } else {
-      this.rerenderDescendants(this.initialMaxIndent + 1);
-    }
+  constructor(initialMaxIndent = 3) {
+    this.initialMaxIndent = Math.max(0, initialMaxIndent);
+    devLog(`expandManager created with depth ${this.initialMaxIndent}`);
   }
 
-  contract() {
-    if (this.initialMaxIndent > 1) {
-      this.rerenderDescendants(this.initialMaxIndent - 1);
-      this.initialMaxIndent -= 1;
-    }
+  expand(): void {
+    this.initialMaxIndent += 1;
+    this.isManuallyExpanded = true;
+    this.rerenderDescendants(this.initialMaxIndent);
   }
 
-  rerenderDescendants(newMaxIndent) {
+  contract(): void {
+    if (this.initialMaxIndent === 0) return;
+    this.initialMaxIndent -= 1;
+    this.rerenderDescendants(this.initialMaxIndent);
+  }
+
+  expandAll(): void {
+    this.initialMaxIndent = Number.MAX_SAFE_INTEGER;
+    this.isManuallyExpanded = true;
+    this.rerenderDescendants(this.initialMaxIndent);
+  }
+
+  collapseAll(): void {
+    this.initialMaxIndent = 0;
+    this.isManuallyExpanded = true;
+    this.rerenderDescendants(0);
+  }
+
+  rerenderDescendants(newMaxIndent: number): void {
     devLog(`redrawing, new maxIndent ${newMaxIndent}`);
-    this.redrawCallbacks.forEach((func) => func(newMaxIndent));
+    for (const callback of this.redrawCallbacks) callback(newMaxIndent);
   }
 
-  registerRedrawDescendantCallback(redraw: Function) {
+  registerRedrawDescendantCallback(redraw: RedrawCallback): () => void {
     this.redrawCallbacks.push(redraw);
+    return () => {
+      const index = this.redrawCallbacks.indexOf(redraw);
+      if (index !== -1) this.redrawCallbacks.splice(index, 1);
+    };
   }
 
-  registerIndentation(indent: number) {
-    devLog(`indentation registered: ${indent}`);
-    if (indent > this.initialMaxIndent) {
+  registerIndentation(indent: number): void {
+    if (!this.isManuallyExpanded && indent > this.initialMaxIndent) {
       this.initialMaxIndent = indent;
     }
   }
 
-  onManualExpand() {
+  onManualExpand(): void {
     this.isManuallyExpanded = true;
   }
 }
