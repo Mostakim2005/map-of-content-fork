@@ -6,6 +6,7 @@
   import NoLinkImage from "./NoLinkImage.svelte";
   import Descendants from "./Descendants.svelte";
   import UpdateNotice from "./UpdateNotice.svelte";
+  import ProfileModal from "../profile-modal";
   import { ExpandManager } from "./helpers/expandManager";
 
   export let view: MOCView;
@@ -21,7 +22,7 @@
   $: centralNotePath = plugin.settings.getCentralNotePath();
   $: centralNoteLabel = centralNotePath ? getDisplayName(centralNotePath, plugin.db) : "None";
   $: profileLabel = plugin.settings.get("active_profile_name");
-  $: scopeLabel = plugin.settings.get("map_scope") === "local" ? `Local · ${plugin.settings.get("local_depth")}` : "Full";
+  $: scopeLabel = plugin.settings.isTemporaryLocalExploration() ? `Temporary local · ${plugin.settings.getEffectiveLocalDepth()}` : (plugin.settings.get("map_scope") === "local" ? `Local · ${plugin.settings.get("local_depth")}` : "Full");
   $: searchVisiblePaths = plugin.db.getSearchVisiblePaths(searchText, view.openFilePath);
   $: pathStartsAtCN = plugin.settings.get("MOC_path_starts_at_CN");
   $: displayPaths = paths.map((path) => {
@@ -58,7 +59,7 @@
     </button>
 
     <div class="context-chip" title="Current MOC scope">{scopeLabel}</div>
-    {#if profileLabel}<div class="context-chip" title="Active MOC profile">{profileLabel}</div>{/if}
+    {#if profileLabel}<button class="context-chip context-button" type="button" title="Switch MOC profile" on:click={() => new ProfileModal(plugin, "choose").open()}>{profileLabel}</button>{/if}
 
     <button
       id="central-node-action"
@@ -79,6 +80,14 @@
     <button class="icon-button" type="button" title="Why is this note here?" aria-label="Why is this note here" on:click={() => plugin.showWhyCurrentNote()}>
       ?
     </button>
+    <button class="icon-button" type="button" title="Why isn't this note connected?" aria-label="Why isn't this note connected" on:click={() => plugin.showWhyCurrentNoteNotConnected()}>
+      ?!
+    </button>
+    {#if plugin.settings.isTemporaryLocalExploration()}
+      <button class="icon-button temporary" type="button" title="Exit temporary local exploration" aria-label="Exit temporary local exploration" on:click={() => plugin.stopTemporaryLocalExploration()}>
+        ⨯
+      </button>
+    {/if}
     <button class="icon-button" type="button" title="Collapse one level" aria-label="Collapse one level" on:click={() => expandManager.contract()}>
       −
     </button>
@@ -161,7 +170,10 @@
   .icon-button { min-width: 32px; min-height: 32px; padding: 0.2rem 0.45rem; }
   .icon-button:hover, .action-label:hover { background: var(--background-modifier-hover); }
   .icon-button:active, .action-label:active { transform: translateY(1px); }
+  .temporary { border-color: var(--interactive-accent); color: var(--interactive-accent); }
   .action-label { flex: 1 1 180px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+  .context-button { cursor: pointer; }
+  .context-button:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
   .context-chip { border: 1px solid var(--background-modifier-border); border-radius: 999px; padding: 0.18rem 0.48rem; font-size: 0.72rem; color: var(--text-muted); background: var(--background-secondary); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .search-row { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
   .search-row input { min-width: 0; flex: 1; }
