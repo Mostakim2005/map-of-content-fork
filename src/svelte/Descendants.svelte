@@ -22,14 +22,14 @@
 
   function initialExpanded(): boolean {
     if (indentation === 0) return true;
-    if (!view.plugin.settings.isExpanded(notePath)) return false;
+    if (!view.plugin.mocSettings.isExpanded(notePath)) return false;
     return indentation < expandManager.initialMaxIndent;
   }
 
   const unregisterRedraw = expandManager.registerRedrawDescendantCallback((maxIndent) => {
     if (indentation === 0) isExpanded = true;
     else if (normalizedFilter !== "") isExpanded = true;
-    else isExpanded = view.plugin.settings.isExpanded(notePath) && indentation < maxIndent;
+    else isExpanded = view.plugin.mocSettings.isExpanded(notePath) && indentation < maxIndent;
   });
 
   onDestroy(unregisterRedraw);
@@ -37,7 +37,7 @@
   function toggleExpanded(): void {
     if (normalizedFilter !== "") return;
     isExpanded = !isExpanded;
-    void view.plugin.settings.setExpanded(notePath, isExpanded);
+    void view.plugin.mocSettings.setExpanded(notePath, isExpanded);
     if (isExpanded) {
       expandManager.onManualExpand();
     }
@@ -63,7 +63,7 @@
       {#if indentation === 0}
         <strong title={notePath}>{getDisplayName(notePath, db)}</strong>
       {:else}
-        <a class="link" title={notePath} on:click={(event) => void NavigateToFile(app, notePath, event)}>
+        <a class="link" href="#" title={notePath} on:click|preventDefault={(event) => void NavigateToFile(app, notePath, event)}>
           {getDisplayName(notePath, db)}
         </a>
       {/if}

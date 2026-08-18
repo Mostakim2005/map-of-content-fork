@@ -6,7 +6,7 @@
   export let plugin: MOCPlugin;
 
   async function dismiss(): Promise<void> {
-    await plugin.settings.set({ do_show_update_notice: false });
+    await plugin.mocSettings.set({ do_show_update_notice: false });
     view.rerender();
   }
 </script>

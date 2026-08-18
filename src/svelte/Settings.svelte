@@ -11,34 +11,34 @@
   export let app: App;
   export let plugin: MOCPlugin;
 
-  let cnPathInputValue = plugin.settings.get("CN_path");
-  let centralMode: CentralNoteMode = plugin.settings.get("central_note_mode");
-  let centralPresets = [...plugin.settings.get("central_note_presets")];
-  let autoExpandDepth = plugin.settings.get("auto_expand_depth");
-  let traversalMode = plugin.settings.get("link_traversal_mode");
-  let maxShortestPaths = plugin.settings.get("max_shortest_paths");
-  let showPaths = plugin.settings.get("do_show_paths_to_note");
-  let pathStartsAtCN = plugin.settings.get("MOC_path_starts_at_CN");
-  let rememberExpanded = plugin.settings.get("do_remember_expanded");
-  let autoUpdate = plugin.settings.get("auto_update_on_file_change");
-  let sortMode: SortMode = plugin.settings.get("sort_mode");
-  let tagFilter = plugin.settings.get("enable_tag_filter");
-  let smartSort = plugin.settings.get("enable_smart_sort");
-  let includedTags = plugin.settings.get("included_tags").join(", ");
-  let excludedTags = plugin.settings.get("excluded_tags").join(", ");
-  let profiles = [...plugin.settings.get("moc_profiles")];
-  let mapScope = plugin.settings.get("map_scope");
-  let localDepth = plugin.settings.get("local_depth");
-  let excludeGenerated = plugin.settings.get("exclude_generated_moc_notes");
+  let cnPathInputValue = plugin.mocSettings.get("CN_path");
+  let centralMode: CentralNoteMode = plugin.mocSettings.get("central_note_mode");
+  let centralPresets = [...plugin.mocSettings.get("central_note_presets")];
+  let autoExpandDepth = plugin.mocSettings.get("auto_expand_depth");
+  let traversalMode = plugin.mocSettings.get("link_traversal_mode");
+  let maxShortestPaths = plugin.mocSettings.get("max_shortest_paths");
+  let showPaths = plugin.mocSettings.get("do_show_paths_to_note");
+  let pathStartsAtCN = plugin.mocSettings.get("MOC_path_starts_at_CN");
+  let rememberExpanded = plugin.mocSettings.get("do_remember_expanded");
+  let autoUpdate = plugin.mocSettings.get("auto_update_on_file_change");
+  let sortMode: SortMode = plugin.mocSettings.get("sort_mode");
+  let tagFilter = plugin.mocSettings.get("enable_tag_filter");
+  let smartSort = plugin.mocSettings.get("enable_smart_sort");
+  let includedTags = plugin.mocSettings.get("included_tags").join(", ");
+  let excludedTags = plugin.mocSettings.get("excluded_tags").join(", ");
+  let profiles = [...plugin.mocSettings.get("moc_profiles")];
+  let mapScope = plugin.mocSettings.get("map_scope");
+  let localDepth = plugin.mocSettings.get("local_depth");
+  let excludeGenerated = plugin.mocSettings.get("exclude_generated_moc_notes");
 
   const refresh = () => {
-    centralPresets = [...plugin.settings.get("central_note_presets")];
-    profiles = [...plugin.settings.get("moc_profiles")];
+    centralPresets = [...plugin.mocSettings.get("central_note_presets")];
+    profiles = [...plugin.mocSettings.get("moc_profiles")];
   };
 
   const updateCNPath = async () => {
     const path = cnPathInputValue.trim();
-    if (!path || !(await plugin.settings.setFixedCentralNote(path, true))) {
+    if (!path || !(await plugin.mocSettings.setFixedCentralNote(path, true))) {
       new Notice("Choose a valid non-excluded Markdown note.");
       return;
     }
@@ -49,12 +49,12 @@
 
   const setCentralMode = async (mode: CentralNoteMode) => {
     const ok = mode === "current"
-      ? await plugin.settings.useCurrentNoteAsCentralNote()
+      ? await plugin.mocSettings.useCurrentNoteAsCentralNote()
       : mode === "automatic"
-        ? (await plugin.settings.set({ central_note_mode: "automatic" }), true)
-        : await plugin.settings.useFixedCentralNote();
+        ? (await plugin.mocSettings.set({ central_note_mode: "automatic" }), true)
+        : await plugin.mocSettings.useFixedCentralNote();
     if (!ok) {
-      centralMode = plugin.settings.get("central_note_mode");
+      centralMode = plugin.mocSettings.get("central_note_mode");
       new Notice(mode === "current" ? "Open a non-excluded Markdown note first." : "Choose a valid fixed Central Node first.");
       return;
     }
@@ -63,21 +63,21 @@
 
   const addCurrentAsFavorite = async () => {
     const file = app.workspace.getActiveFile();
-    if (!file || file.extension !== "md" || plugin.settings.isExcludedFile(file)) {
+    if (!file || file.extension !== "md" || plugin.mocSettings.isExcludedFile(file)) {
       new Notice("Open a non-excluded Markdown note first.");
       return;
     }
-    await plugin.settings.addCentralNotePreset(file.path);
+    await plugin.mocSettings.addCentralNotePreset(file.path);
     refresh();
   };
 
   const removeFavorite = async (path: string) => {
-    await plugin.settings.removeCentralNotePreset(path);
+    await plugin.mocSettings.removeCentralNotePreset(path);
     refresh();
   };
 
   const useFavorite = async (path: string) => {
-    if (await plugin.settings.setFixedCentralNote(path, false)) {
+    if (await plugin.mocSettings.setFixedCentralNote(path, false)) {
       centralMode = "fixed";
       cnPathInputValue = path;
     } else {
@@ -87,14 +87,14 @@
   };
 
   const saveBoolean = async (key: "do_show_paths_to_note" | "MOC_path_starts_at_CN" | "do_remember_expanded" | "auto_update_on_file_change", value: boolean) => {
-    await plugin.settings.set({ [key]: value });
+    await plugin.mocSettings.set({ [key]: value });
   };
 
   const saveTags = async () => {
     const parse = (value: string) => Array.from(new Set(value.split(",").map((tag) => tag.trim().replace(/^#/, "")).filter(Boolean)));
-    await plugin.settings.set({ included_tags: parse(includedTags), excluded_tags: parse(excludedTags) });
-    includedTags = plugin.settings.get("included_tags").join(", ");
-    excludedTags = plugin.settings.get("excluded_tags").join(", ");
+    await plugin.mocSettings.set({ included_tags: parse(includedTags), excluded_tags: parse(excludedTags) });
+    includedTags = plugin.mocSettings.get("included_tags").join(", ");
+    excludedTags = plugin.mocSettings.get("excluded_tags").join(", ");
   };
 </script>
 
@@ -150,23 +150,23 @@
     <h2>Graph perspective</h2>
     <div class="grid">
       <label>Map scope
-        <select bind:value={mapScope} on:change={() => void plugin.settings.set({ map_scope: mapScope })}>
+        <select bind:value={mapScope} on:change={() => void plugin.mocSettings.set({ map_scope: mapScope })}>
           <option value="full">Full reachable MOC</option>
           <option value="local">Local neighborhood</option>
         </select>
       </label>
       <label>Local depth
-        <input type="number" min="1" max="50" bind:value={localDepth} disabled={mapScope !== "local"} on:change={() => void plugin.settings.set({ local_depth: Number(localDepth) })} />
+        <input type="number" min="1" max="50" bind:value={localDepth} disabled={mapScope !== "local"} on:change={() => void plugin.mocSettings.set({ local_depth: Number(localDepth) })} />
       </label>
       <label>Link traversal
-        <select bind:value={traversalMode} on:change={() => void plugin.settings.set({ link_traversal_mode: traversalMode })}>
+        <select bind:value={traversalMode} on:change={() => void plugin.mocSettings.set({ link_traversal_mode: traversalMode })}>
           <option value="both">Both directions</option>
           <option value="outgoing">Outgoing links only</option>
           <option value="incoming">Incoming links only</option>
         </select>
       </label>
       <label>Sort descendants
-        <select bind:value={sortMode} on:change={() => void plugin.settings.set({ sort_mode: sortMode })}>
+        <select bind:value={sortMode} on:change={() => void plugin.mocSettings.set({ sort_mode: sortMode })}>
           <option value="alpha">Alphabetical</option>
           <option value="links">Most connected</option>
           <option value="modified">Recently modified</option>
@@ -174,21 +174,21 @@
         </select>
       </label>
       <label>Automatic expansion depth
-        <input type="number" min="0" max="50" bind:value={autoExpandDepth} on:change={() => void plugin.settings.set({ auto_expand_depth: Number(autoExpandDepth) })} />
+        <input type="number" min="0" max="50" bind:value={autoExpandDepth} on:change={() => void plugin.mocSettings.set({ auto_expand_depth: Number(autoExpandDepth) })} />
       </label>
       <label>Maximum shortest paths
-        <input type="number" min="1" max="5000" bind:value={maxShortestPaths} on:change={() => void plugin.settings.set({ max_shortest_paths: Number(maxShortestPaths) })} />
+        <input type="number" min="1" max="5000" bind:value={maxShortestPaths} on:change={() => void plugin.mocSettings.set({ max_shortest_paths: Number(maxShortestPaths) })} />
       </label>
     </div>
-    <label class="toggle"><input type="checkbox" bind:checked={smartSort} on:change={() => void plugin.settings.set({ enable_smart_sort: smartSort })} /> Smart-sort connected notes to the top</label>
+    <label class="toggle"><input type="checkbox" bind:checked={smartSort} on:change={() => void plugin.mocSettings.set({ enable_smart_sort: smartSort })} /> Smart-sort connected notes to the top</label>
     <p class="muted">Local neighborhood is an optional compact view around the active Central Node. It does not modify notes or links.</p>
-    <label class="toggle"><input type="checkbox" bind:checked={excludeGenerated} on:change={() => void plugin.settings.set({ exclude_generated_moc_notes: excludeGenerated })} /> Keep generated MOC notes out of the graph</label>
+    <label class="toggle"><input type="checkbox" bind:checked={excludeGenerated} on:change={() => void plugin.mocSettings.set({ exclude_generated_moc_notes: excludeGenerated })} /> Keep generated MOC notes out of the graph</label>
     <p class="muted">Smart sorting is optional and only changes ordering; it never changes the underlying graph.</p>
   </div>
 
   <div class="section-card">
     <h2>Optional tag perspective</h2>
-    <label class="toggle"><input type="checkbox" bind:checked={tagFilter} on:change={() => void plugin.settings.set({ enable_tag_filter: tagFilter })} /> Enable tag filtering</label>
+    <label class="toggle"><input type="checkbox" bind:checked={tagFilter} on:change={() => void plugin.mocSettings.set({ enable_tag_filter: tagFilter })} /> Enable tag filtering</label>
     {#if tagFilter}
       <div class="grid">
         <label>Include tags

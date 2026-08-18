@@ -14,17 +14,16 @@
   export let error: string | undefined;
 
   const plugin = view.plugin;
-  const expandManager = new ExpandManager(plugin.settings.get("auto_expand_depth"));
-  let mainDiv: HTMLDivElement;
+  const expandManager = new ExpandManager(plugin.mocSettings.get("auto_expand_depth"));
   let searchText = "";
   let currentNoteIsPinned = view.isPinned;
 
-  $: centralNotePath = plugin.settings.getCentralNotePath();
+  $: centralNotePath = plugin.mocSettings.getCentralNotePath();
   $: centralNoteLabel = centralNotePath ? getDisplayName(centralNotePath, plugin.db) : "None";
-  $: profileLabel = plugin.settings.get("active_profile_name");
-  $: scopeLabel = plugin.settings.isTemporaryLocalExploration() ? `Temporary local · ${plugin.settings.getEffectiveLocalDepth()}` : (plugin.settings.get("map_scope") === "local" ? `Local · ${plugin.settings.get("local_depth")}` : "Full");
+  $: profileLabel = plugin.mocSettings.get("active_profile_name");
+  $: scopeLabel = plugin.mocSettings.isTemporaryLocalExploration() ? `Temporary local · ${plugin.mocSettings.getEffectiveLocalDepth()}` : (plugin.mocSettings.get("map_scope") === "local" ? `Local · ${plugin.mocSettings.get("local_depth")}` : "Full");
   $: searchVisiblePaths = plugin.db.getSearchVisiblePaths(searchText, view.openFilePath);
-  $: pathStartsAtCN = plugin.settings.get("MOC_path_starts_at_CN");
+  $: pathStartsAtCN = plugin.mocSettings.get("MOC_path_starts_at_CN");
   $: displayPaths = paths.map((path) => {
     const members = path.map((item) => item[0]);
     const ordered = pathStartsAtCN ? members : [...members].reverse();
@@ -83,7 +82,7 @@
     <button class="icon-button" type="button" title="Why isn't this note connected?" aria-label="Why isn't this note connected" on:click={() => plugin.showWhyCurrentNoteNotConnected()}>
       ?!
     </button>
-    {#if plugin.settings.isTemporaryLocalExploration()}
+    {#if plugin.mocSettings.isTemporaryLocalExploration()}
       <button class="icon-button temporary" type="button" title="Exit temporary local exploration" aria-label="Exit temporary local exploration" on:click={() => plugin.stopTemporaryLocalExploration()}>
         ⨯
       </button>
@@ -110,7 +109,7 @@
   </div>
 
   <div id="main-moc-div">
-    {#if plugin.settings.get("do_show_update_notice")}
+    {#if plugin.mocSettings.get("do_show_update_notice")}
       <UpdateNotice {view} {plugin} />
     {:else if error}
       <div class="error">{@html error}</div>
@@ -122,11 +121,11 @@
         <NoLinkImage />
       </div>
     {:else}
-      {#if plugin.settings.get("do_show_paths_to_note")}
+      {#if plugin.mocSettings.get("do_show_paths_to_note")}
         <section aria-label="Shortest paths">
           <h4>Shortest path{paths.length === 1 ? "" : "s"}</h4>
           {#if view.pathsTruncated}
-            <p class="path-limit" role="status">Showing the first {plugin.settings.get("max_shortest_paths")} shortest paths to keep this view responsive.</p>
+            <p class="path-limit" role="status">Showing the first {plugin.mocSettings.get("max_shortest_paths")} shortest paths to keep this view responsive.</p>
           {/if}
           {#each displayPaths as path}
             <div class="path">
@@ -135,7 +134,7 @@
                 {#if (pathStartsAtCN && i === path.length - 1) || (!pathStartsAtCN && i === 0)}
                   <span title={pathitem[0]}>{getDisplayName(pathitem[0], plugin.db)}</span>
                 {:else}
-                  <a class="link" title={pathitem[0]} on:click={(event) => void NavigateToFile(plugin.app, pathitem[0], event)}>{getDisplayName(pathitem[0], plugin.db)}</a>
+                  <a class="link" href="#" title={pathitem[0]} on:click|preventDefault={(event) => void NavigateToFile(plugin.app, pathitem[0], event)}>{getDisplayName(pathitem[0], plugin.db)}</a>
                 {/if}
               {/each}
             </div>
