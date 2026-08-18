@@ -26,25 +26,15 @@ jobs:
         with:
           node-version: 20.x
           package-manager-cache: false
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
 
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json found; using npm ci"
-            npm ci
-          else
-            echo "package-lock.json not found; bootstrapping with npm install"
-            npm install --no-audit --no-fund
-          fi
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
 
       - name: Type and Svelte checks
         run: npm run check
 
       - name: ESLint
         run: npm run lint
-
 
       - name: Regression tests
         run: npm test
@@ -56,62 +46,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           TAG="${GITHUB_REF_NAME#v}"
-          echo "Tag version: $TAG"
 
           node - "$TAG" <<'NODE'
           const fs = require("fs");
-
           const tagVersion = process.argv[2];
           const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
 
           if (manifest.version !== tagVersion) {
-            throw new Error(
-              `Version mismatch: manifest.json=${manifest.version}, tag=${tagVersion}`
-            );
+            throw new Error(`Version mismatch: manifest.json=${manifest.version}, tag=${tagVersion}`);
           }
 
           if (fs.existsSync("versions.json")) {
             const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
-
             if (!Object.prototype.hasOwnProperty.call(versions, tagVersion)) {
               throw new Error(`versions.json does not contain ${tagVersion}`);
             }
           }
-
-          console.log(`Release version validated: ${tagVersion}`);
           NODE
 
       - name: Validate release files
         shell: bash
         run: |
           set -euo pipefail
-
           test -f main.js
           test -f manifest.json
-
-          if [ -f styles.css ]; then
-            echo "styles.css found"
-          else
-            echo "No styles.css file; continuing"
-          fi
-
-          ls -lh main.js manifest.json styles.css 2>/dev/null || true
 
       - name: Create release package
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p release
           cp main.js release/
           cp manifest.json release/
-
-          if [ -f styles.css ]; then
-            cp styles.css release/
-          fi
-
+          if [ -f styles.css ]; then cp styles.css release/; fi
           cd release
           zip -r "../map-of-content-${GITHUB_REF_NAME}.zip" .
 
@@ -141,12 +109,3 @@ jobs:
           if [ -f styles.css ]; then
             gh release upload "${GITHUB_REF_NAME}" styles.css
           fi
-
-      - name: Upload generated lockfile
-        if: always() && !cancelled()
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-package-lock-release
-          path: package-lock.json
-          if-no-files-found: ignore
-          retention-days: 7

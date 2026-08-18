@@ -26,25 +26,15 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
 
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json found; using npm ci"
-            npm ci
-          else
-            echo "package-lock.json not found; bootstrapping with npm install"
-            npm install --no-audit --no-fund
-          fi
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
 
       - name: Check TypeScript and Svelte
         run: npm run check
 
       - name: Run ESLint
         run: npm run lint
-
 
       - name: Build plugin
         run: npm run build
@@ -58,7 +48,6 @@ jobs:
 
           node - <<'NODE'
           const fs = require("fs");
-
           const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
 
           if (!manifest.id) throw new Error("manifest.json is missing id");
