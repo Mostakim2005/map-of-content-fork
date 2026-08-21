@@ -7,22 +7,20 @@ on:
 
 permissions:
   contents: write
-  id-token: write
-  attestations: write
 
 jobs:
   release:
-    name: Build and Release
+    name: Build and Publish Release
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@v4
         with:
           node-version: 20.x
           package-manager-cache: false
@@ -32,68 +30,147 @@ jobs:
 
       - name: Verify dependencies
         run: |
+          set -euo pipefail
           npm ls svelte-check --depth=0
           test -x node_modules/.bin/svelte-check
 
-      - name: Type and Svelte checks
+      - name: Check TypeScript and Svelte
         run: npm run check
 
-      - name: ESLint
+      - name: Run ESLint
         run: npm run lint
 
-      - name: Regression tests
+      - name: Run regression tests
         run: npm test
 
-      - name: Production build
+      - name: Build plugin
         run: npm run build
 
       - name: Validate release version
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
 
-          node - "$TAG" <<'NODE'
-          const fs = require("fs");
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+          node - "$TAG_VERSION" <<'NODE'
+          const fs = require("node:fs");
+
           const tagVersion = process.argv[2];
           const manifest = JSON.parse(fs.readFileSync("manifest.json", "utf8"));
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
 
           if (manifest.version !== tagVersion) {
-            throw new Error(`Version mismatch: manifest.json=${manifest.version}, tag=${tagVersion}`);
+            throw new Error(
+              `Tag/version mismatch: tag=${tagVersion}, manifest.json=${manifest.version}`
+            );
+          }
+
+          if (pkg.version !== tagVersion) {
+            throw new Error(
+              `Tag/version mismatch: tag=${tagVersion}, package.json=${pkg.version}`
+            );
           }
 
           if (fs.existsSync("versions.json")) {
             const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+
             if (!Object.prototype.hasOwnProperty.call(versions, tagVersion)) {
               throw new Error(`versions.json does not contain ${tagVersion}`);
             }
           }
+
+          console.log(`Validated release version: ${tagVersion}`);
           NODE
 
-      - name: Validate release files
+      - name: Validate generated plugin files
         shell: bash
         run: |
           set -euo pipefail
-          test -f main.js
-          test -f manifest.json
 
-      - name: Create release package
+          test -s main.js
+          test -s manifest.json
+
+          echo "Required release files:"
+          ls -lh main.js manifest.json
+
+          if [ -s styles.css ]; then
+            echo "Optional styles.css found:"
+            ls -lh styles.css
+          else
+            echo "styles.css not generated; continuing because it is optional."
+          fi
+
+      - name: Create plugin ZIP
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release
+
+          rm -rf release
+          mkdir release
+
           cp main.js release/
           cp manifest.json release/
-          if [ -f styles.css ]; then cp styles.css release/; fi
+
+          if [ -s styles.css ]; then
+            cp styles.css release/
+          fi
+
           cd release
-          zip -r "../map-of-content-${GITHUB_REF_NAME}.zip" .
+          zip -9 -r "../map-of-content-${GITHUB_REF_NAME}.zip" .
 
-      - name: Generate build provenance
-        uses: actions/attest@v4
-        with:
-          subject-path: "map-of-content-${{ github.ref_name }}.zip"
+          cd ..
+          test -s "map-of-content-${GITHUB_REF_NAME}.zip"
+          unzip -l "map-of-content-${GITHUB_REF_NAME}.zip"
 
-      - name: Upload release artifact
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          ZIP="map-of-content-${TAG}.zip"
+
+          gh release create "$TAG" \
+            "$ZIP" \
+            main.js \
+            manifest.json \
+            --verify-tag \
+            --title "Map of Content ${TAG#v}" \
+            --generate-notes
+
+          if [ -s styles.css ]; then
+            gh release upload "$TAG" styles.css
+          fi
+
+      - name: Verify GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+
+          gh release view "$TAG" --json assets --jq '
+            .assets[].name
+          '
+
+          gh release view "$TAG" --json assets --jq '
+            [ .assets[].name ] |
+            if (
+              index("main.js") != null and
+              index("manifest.json") != null
+            )
+            then
+              "Required release assets are present."
+            else
+              error("main.js or manifest.json is missing from the GitHub Release.")
+            end
+          '
+
+      - name: Upload CI release artifact
         uses: actions/upload-artifact@v4
         with:
           name: map-of-content-${{ github.ref_name }}
@@ -102,15 +179,5 @@ jobs:
             main.js
             manifest.json
             styles.css
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 30
-
-      - name: Create draft GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}"             "main.js"             "manifest.json"             --draft             --title "Map of Content ${GITHUB_REF_NAME#v}"             --generate-notes
-
-          if [ -f styles.css ]; then
-            gh release upload "${GITHUB_REF_NAME}" styles.css
-          fi
